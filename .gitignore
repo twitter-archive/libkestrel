@@ -1,0 +1,16 @@
+target
+kestrel.tmproj
+dist
+*.class
+bin
+.manager
+.DS_Store
+*.sw?
+project/boot/
+project/plugins/lib_managed/
+project/plugins/src_managed/
+project/plugins/project/
+lib_managed/
+ignore/
+*.iml
+.idea/
