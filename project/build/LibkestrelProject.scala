@@ -10,29 +10,13 @@ import com.twitter.sbt._
  * mean to add a dependency on exampleland version 1.0.3 from provider "com.example".
  */
 class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info) 
-  with CompileThriftScala 
   with NoisyDependencies 
   with DefaultRepos 
   with SubversionPublisher
   with PublishSourcesAndJavadocs
   with PublishSite
 {
-  val finagleVersion = "1.2.5"
-
-  val finagleC = "com.twitter" % "finagle-core" % finagleVersion
-  val finagleT = "com.twitter" % "finagle-thrift" % finagleVersion
-  val finagleO = "com.twitter" % "finagle-ostrich4" % finagleVersion
-
-  // thrift
-  val libthrift = "thrift" % "libthrift" % "0.5.0"
   val util = "com.twitter" % "util" % "1.8.3"
-
-  override def originalThriftNamespaces = Map("Libkestrel" -> "com.twitter.libkestrel.thrift")
-  override val scalaThriftTargetNamespace = "com.twitter.libkestrel"
-  
-  val slf4jVersion = "1.5.11"
-  val slf4jApi = "org.slf4j" % "slf4j-api" % slf4jVersion withSources() intransitive()
-  val slf4jBindings = "org.slf4j" % "slf4j-jdk14" % slf4jVersion withSources() intransitive()
 
   // for tests
   val specs = "org.scala-tools.testing" % "specs_2.8.1" % "1.6.7" % "test" withSources()
@@ -41,8 +25,6 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   val cglib = "cglib" % "cglib" % "2.1_3" % "test"
   val asm = "asm" % "asm" % "1.5.3" % "test"
   val objenesis = "org.objenesis" % "objenesis" % "1.1" % "test"
-
-  override def mainClass = Some("com.twitter.libkestrel.Main")
 
   override def subversionRepository = Some("http://svn.local.twitter.com/maven")
 }
