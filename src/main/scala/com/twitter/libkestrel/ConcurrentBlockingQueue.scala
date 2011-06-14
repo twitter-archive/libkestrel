@@ -152,4 +152,8 @@ class ConcurrentBlockingQueue[A <: AnyRef](
       }
     }
   }
+
+  def toDebug: String = {
+    "<queue size=%d waiters=%d/%d>".format(elementCount.get, waiters.size, waiterSet.size)
+  }
 }

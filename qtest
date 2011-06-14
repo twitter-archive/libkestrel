@@ -1,0 +1,1 @@
+java -Xms1024m -Xmx1024m -jar ./dist/libkestrel/libkestrel-1.0.0-SNAPSHOT.jar "$@"
