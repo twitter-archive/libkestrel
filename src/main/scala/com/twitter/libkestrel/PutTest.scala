@@ -9,10 +9,10 @@ import com.twitter.util.{JavaTimer, Timer}
 object PutTest {
   val description = "write as many items as we can into a queue, concurrently, and time it"
 
-  var threadCount = 100
+  var threadCount = Runtime.getRuntime.availableProcessors() * 2
   var itemCount = 10000
   var itemLimit = 1000
-  var cycles = 1
+  var cycles = 10
 
   implicit val javaTimer: Timer = new JavaTimer()
 
