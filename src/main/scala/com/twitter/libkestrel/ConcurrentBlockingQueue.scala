@@ -63,6 +63,11 @@ class ConcurrentBlockingQueue[A <: AnyRef](
   private[this] val waiterSet = new ConcurrentHashMap[Promise[A], Waiter]
 
   /**
+   * A queue of pollers just checking in to see if anything is immediately available.
+   */
+  private[this] val pollers = new ConcurrentLinkedQueue[Promise[Option[A]]]
+
+  /**
    * An estimate of the queue size, tracked for each put/get.
    */
   private[this] val elementCount = new AtomicInteger(0)
@@ -103,6 +108,20 @@ class ConcurrentBlockingQueue[A <: AnyRef](
    */
   final def get(timeout: Duration): Future[A] = get(Some(timeout))
 
+  /**
+   * Get the next item from the queue if one is immediately available.
+   */
+  final def poll(): Option[A] = {
+    val promise = new Promise[Option[A]]
+    if (queue.isEmpty) {
+      promise.setValue(None)
+    } else {
+      pollers.add(promise)
+      handoff()
+    }
+    promise()
+  }
+
   private def get(timeout: Option[Duration]): Future[A] = {
     val promise = new Promise[A]
     val timerTask = timeout.map { t =>
@@ -115,7 +134,7 @@ class ConcurrentBlockingQueue[A <: AnyRef](
     val waiter = Waiter(timerTask, promise)
     waiterSet.put(promise, waiter)
     waiters.add(waiter)
-    if (! queue.isEmpty) handoff()
+    if (!queue.isEmpty) handoff()
     promise
   }
 
@@ -138,17 +157,25 @@ class ConcurrentBlockingQueue[A <: AnyRef](
         elementCount.decrementAndGet()
       }
     }
-    val item = queue.peek()
-    if (item ne null) {
-      var waiter = waiters.poll()
-      while ((waiter ne null) && (waiterSet.remove(waiter.promise) eq null)) {
-        waiter = waiters.poll()
-      }
-      if (waiter ne null) {
-        waiter.timerTask.foreach { _.cancel() }
-        waiter.promise.setValue(item)
-        queue.poll()
-        elementCount.decrementAndGet()
+
+    var poller = pollers.poll()
+    if (poller ne null) {
+      val item = queue.poll()
+      if (item ne null) elementCount.decrementAndGet()
+      poller.setValue(Option(item))
+    } else {
+      val item = queue.peek()
+      if (item ne null) {
+        var waiter = waiters.poll()
+        while ((waiter ne null) && (waiterSet.remove(waiter.promise) eq null)) {
+          waiter = waiters.poll()
+        }
+        if (waiter ne null) {
+          waiter.timerTask.foreach { _.cancel() }
+          waiter.promise.setValue(item)
+          queue.poll()
+          elementCount.decrementAndGet()
+        }
       }
     }
   }

@@ -22,6 +22,16 @@ object ConcurrentBlockingQueueSpec extends Specification {
       queue.size mustEqual 0
     }
 
+    "poll items" in {
+      val queue = ConcurrentBlockingQueue[String]
+      queue.size mustEqual 0
+      queue.poll() mustEqual None
+      queue.put("first") mustEqual true
+      queue.size mustEqual 1
+      queue.poll() mustEqual Some("first")
+      queue.poll() mustEqual None
+    }
+
     "honor the max size" in {
       "by refusing new puts" in {
         val queue = ConcurrentBlockingQueue[String](5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)
