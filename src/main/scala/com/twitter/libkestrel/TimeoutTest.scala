@@ -16,6 +16,7 @@ object TimeoutTest {
   var readTimeoutLow = 5.milliseconds
   var readTimeoutHigh = 15.milliseconds
   var testTime = 10.seconds
+  var oldQueue = false
 
   implicit val javaTimer: Timer = new JavaTimer()
 
@@ -36,6 +37,8 @@ object TimeoutTest {
     Console.println("        high end of the random reader timeout (default: %d)".format(readTimeoutHigh.inMilliseconds))
     Console.println("    -t MILLISECONDS")
     Console.println("        run test for MILLISECONDS (default: %d)".format(testTime.inMilliseconds))
+    Console.println("    -Q")
+    Console.println("        use old simple queue instead, for comparison")
   }
 
   def parseArgs(args: List[String]) {
@@ -62,6 +65,9 @@ object TimeoutTest {
       case "-t" :: x :: xs =>
         testTime = x.toInt.milliseconds
         parseArgs(xs)
+      case "-Q" :: xs =>
+        oldQueue = true
+        parseArgs(xs)
       case _ =>
         usage()
         System.exit(1)
@@ -71,11 +77,15 @@ object TimeoutTest {
   def apply(args: List[String]) {
     parseArgs(args)
 
-    println("timeout: writers=%d, readers=%d, write_rate=%s, read_timeout=(%s, %s), run=%s".format(
-      writerThreadCount, readerThreadCount, writeRate, readTimeoutLow, readTimeoutHigh, testTime
+    println("timeout: writers=%d, readers=%d, write_rate=%s, read_timeout=(%s, %s), run=%s, oldq=%s".format(
+      writerThreadCount, readerThreadCount, writeRate, readTimeoutLow, readTimeoutHigh, testTime, oldQueue
     ))
 
-    val queue = ConcurrentBlockingQueue[String]
+    val queue = if (oldQueue) {
+      SimpleBlockingQueue[String]
+    } else {
+      ConcurrentBlockingQueue[String]
+    }
     val lastId = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow
     val readerDeadline = deadline + readTimeoutHigh * 2

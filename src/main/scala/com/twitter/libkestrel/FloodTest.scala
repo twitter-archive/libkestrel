@@ -16,6 +16,7 @@ object FloodTest {
   var pollPercent = 25
   var maxItems = 10000
   var validate = false
+  var oldQueue = false
 
   implicit val javaTimer: Timer = new JavaTimer()
 
@@ -36,6 +37,8 @@ object FloodTest {
     Console.println("        slow down the writer threads a bit when the queue reaches ITEMS items (default: %d)".format(maxItems))
     Console.println("    -V")
     Console.println("        validate items afterwards (makes it much slower)")
+    Console.println("    -Q")
+    Console.println("        use old simple queue instead, for comparison")
   }
 
   def parseArgs(args: List[String]) {
@@ -62,6 +65,9 @@ object FloodTest {
       case "-V" :: xs =>
         validate = true
         parseArgs(xs)
+      case "-Q" :: xs =>
+        oldQueue = true
+        parseArgs(xs)
       case _ =>
         usage()
         System.exit(1)
@@ -71,11 +77,15 @@ object FloodTest {
   def apply(args: List[String]) {
     parseArgs(args)
 
-    println("flood: writers=%d, readers=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s".format(
-      writerThreadCount, readerThreadCount, testTime, pollPercent, maxItems, validate
+    println("flood: writers=%d, readers=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, oldq=%s".format(
+      writerThreadCount, readerThreadCount, testTime, pollPercent, maxItems, validate, oldQueue
     ))
 
-    val queue = ConcurrentBlockingQueue[String]
+    val queue = if (oldQueue) {
+      SimpleBlockingQueue[String]
+    } else {
+      ConcurrentBlockingQueue[String]
+    }
     val startLatch = new CountDownLatch(1)
     val lastId = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow

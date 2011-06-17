@@ -13,6 +13,7 @@ object PutTest {
   var itemCount = 10000
   var itemLimit = 1000
   var cycles = 10
+  var oldQueue = false
 
   implicit val javaTimer: Timer = new JavaTimer()
 
@@ -29,6 +30,8 @@ object PutTest {
     Console.println("        limit total queue size to ITEMS (default: %d)".format(itemLimit))
     Console.println("    -C CYCLES")
     Console.println("        run test CYCLES times (for jit warmup) (default: %d)".format(cycles))
+    Console.println("    -Q")
+    Console.println("        use old simple queue instead, for comparison")
   }
 
   def parseArgs(args: List[String]) {
@@ -49,6 +52,9 @@ object PutTest {
       case "-C" :: x :: xs =>
         cycles = x.toInt
         parseArgs(xs)
+      case "-Q" :: xs =>
+        oldQueue = true
+        parseArgs(xs)
       case _ =>
         usage()
         System.exit(1)
@@ -56,7 +62,12 @@ object PutTest {
   }
 
   def cycle() {
-    val queue = ConcurrentBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
+    val queue = if (oldQueue) {
+      SimpleBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
+    } else {
+      ConcurrentBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
+    }
+
     val startLatch = new CountDownLatch(1)
     val timings = new AtomicReferenceArray[Long](threadCount)
     val threads = (0 until threadCount).map { threadId =>
@@ -110,8 +121,8 @@ object PutTest {
   def apply(args: List[String]) {
     parseArgs(args)
 
-    println("put: writers=%d, items=%d, item_limit=%d, cycles=%d".format(
-      threadCount, itemCount, itemLimit, cycles
+    println("put: writers=%d, items=%d, item_limit=%d, cycles=%d, oldq=%s".format(
+      threadCount, itemCount, itemLimit, cycles, oldQueue
     ))
     (0 until cycles).foreach { n => cycle() }
   }
