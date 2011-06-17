@@ -57,7 +57,7 @@ object PutTest {
 
   def cycle() {
     val queue = ConcurrentBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
-    val startLatch = new CountDownLatch(0)
+    val startLatch = new CountDownLatch(1)
     val timings = new AtomicReferenceArray[Long](threadCount)
     val threads = (0 until threadCount).map { threadId =>
       new Thread() {
@@ -74,6 +74,7 @@ object PutTest {
     }.toList
 
     threads.foreach { _.start() }
+    startLatch.countDown()
     threads.foreach { _.join() }
 
     val totalTime = (0 until threadCount).map { tid => timings.get(tid) }.sum
