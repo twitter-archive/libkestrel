@@ -19,6 +19,8 @@ object Main {
     Console.println("        %s".format(TimeoutTest.description))
     Console.println("    put")
     Console.println("        %s".format(PutTest.description))
+    Console.println("    flood")
+    Console.println("        %s".format(FloodTest.description))
     Console.println()
     Console.println("use 'qtest <test> --help' to see options for a specific test")
     Console.println()
@@ -33,6 +35,8 @@ object Main {
         TimeoutTest(xs)
       case "put" :: xs =>
         PutTest(xs)
+      case "flood" :: xs =>
+        FloodTest(xs)
       case _ =>
         usage()
     }
