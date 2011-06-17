@@ -38,11 +38,11 @@ object ConcurrentBlockingQueue {
  * @param maxItems maximum allowed size of the queue (use `Long.MaxValue` for infinite size)
  * @param fullPolicy what to do when the queue is full and a `put` is attempted
  */
-class ConcurrentBlockingQueue[A <: AnyRef](
+final class ConcurrentBlockingQueue[A <: AnyRef](
   maxItems: Long,
   fullPolicy: ConcurrentBlockingQueue.FullPolicy,
   timer: Timer
-) {
+) extends BlockingQueue[A] {
   import ConcurrentBlockingQueue._
 
   /**
@@ -101,17 +101,17 @@ class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue, waiting forever if necessary.
    */
-  final def get(): Future[A] = get(None)
+  def get(): Future[A] = get(None)
 
   /**
    * Get the next item from the queue if it arrives before a timeout.
    */
-  final def get(timeout: Duration): Future[A] = get(Some(timeout))
+  def get(timeout: Duration): Future[A] = get(Some(timeout))
 
   /**
    * Get the next item from the queue if one is immediately available.
    */
-  final def poll(): Option[A] = {
+  def poll(): Option[A] = {
     val promise = new Promise[Option[A]]
     if (queue.isEmpty) {
       promise.setValue(None)
@@ -181,6 +181,6 @@ class ConcurrentBlockingQueue[A <: AnyRef](
   }
 
   def toDebug: String = {
-    "<queue size=%d waiters=%d/%d>".format(elementCount.get, waiters.size, waiterSet.size)
+    "<ConcurrentBlockingQueue size=%d waiters=%d/%d>".format(elementCount.get, waiters.size, waiterSet.size)
   }
 }
