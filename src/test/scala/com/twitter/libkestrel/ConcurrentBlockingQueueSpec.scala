@@ -8,9 +8,16 @@ import com.twitter.util.{TimeoutException, Timer, JavaTimer}
 object ConcurrentBlockingQueueSpec extends Specification {
   implicit val javaTimer: Timer = new JavaTimer()
 
-  "ConcurrentBlockingQueue" should {
+  trait QueueBuilder {
+    def newQueue(): BlockingQueue[String]
+    def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy): BlockingQueue[String]
+  }
+
+  def tests(builder: QueueBuilder) {
+    import builder._
+
     "add and remove items" in {
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       queue.size mustEqual 0
       queue.put("first") mustEqual true
       queue.size mustEqual 1
@@ -23,7 +30,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
     }
 
     "poll items" in {
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       queue.size mustEqual 0
       queue.poll() mustEqual None
       queue.put("first") mustEqual true
@@ -34,7 +41,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
 
     "honor the max size" in {
       "by refusing new puts" in {
-        val queue = ConcurrentBlockingQueue[String](5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)
+        val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)
         (0 until 5).foreach { i =>
           queue.put(i.toString) mustEqual true
         }
@@ -47,7 +54,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
       }
 
       "by dropping old items" in {
-        val queue = ConcurrentBlockingQueue[String](5, ConcurrentBlockingQueue.FullPolicy.DropOldest)
+        val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.DropOldest)
         (0 until 5).foreach { i =>
           queue.put(i.toString) mustEqual true
         }
@@ -61,7 +68,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
     }
 
     "fill in empty promises as items arrive" in {
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       val futures = (0 until 10).map { i => queue.get() }.toList
       futures.foreach { f => f.isDefined mustEqual false }
 
@@ -73,14 +80,14 @@ object ConcurrentBlockingQueueSpec extends Specification {
     }
 
     "timeout" in {
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       val future = queue.get(10.milliseconds)
       future.isDefined must eventually(be_==(true))
       future() must throwA[TimeoutException]
     }
 
     "fulfill gets before they timeout" in {
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       val future1 = queue.get(10.milliseconds)
       val future2 = queue.get(10.milliseconds)
       queue.put("surprise!")
@@ -93,7 +100,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
     "get an item or throw a timeout exception, but not both" in {
       var ex = 0
       (0 until 100).foreach { i =>
-        val queue = ConcurrentBlockingQueue[String]
+        val queue = newQueue()
         val future = queue.get(10.milliseconds)
         Thread.sleep(10)
         // the future will throw an exception if it's set twice.
@@ -111,7 +118,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
 
     "remain calm in the presence of a put-storm" in {
       val count = 100
-      val queue = ConcurrentBlockingQueue[String]
+      val queue = newQueue()
       val futures = (0 until count).map { i => queue.get() }.toList
       val threads = (0 until count).map { i =>
         new Thread() {
@@ -129,5 +136,21 @@ object ConcurrentBlockingQueueSpec extends Specification {
       }
       (0 until count).map { _.toString }.toSet mustEqual collected
     }
+  }
+
+  "ConcurrentBlockingQueue" should {
+    tests(new QueueBuilder {
+      def newQueue() = ConcurrentBlockingQueue[String]
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
+        ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+    })
+  }
+
+  "SimpleBlockingQueue" should {
+    tests(new QueueBuilder {
+      def newQueue() = SimpleBlockingQueue[String]
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
+        ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+    })
   }
 }
