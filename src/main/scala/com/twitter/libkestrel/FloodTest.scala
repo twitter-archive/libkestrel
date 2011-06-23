@@ -1,11 +1,10 @@
 package com.twitter.libkestrel
 
-import java.util.Random
+import java.util.concurrent.{CountDownLatch, ConcurrentHashMap}
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLongArray, AtomicIntegerArray}
 import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
 import com.twitter.util.{TimeoutException, Time, JavaTimer, Timer}
-import java.util.concurrent.{CountDownLatch, ConcurrentHashMap}
-import java.util.concurrent.atomic.{AtomicInteger, AtomicLongArray, AtomicIntegerArray}
 
 object FloodTest {
   val description = "put & get items to/from a queue as fast as possible"
@@ -104,7 +103,7 @@ object FloodTest {
       }
     }.toList
 
-    val random = new Random()
+    val random = new XorRandom()
     val received = (0 until writerThreadCount).map { i => new ConcurrentHashMap[Int, AtomicInteger] }.toArray
     val readCounts = new AtomicIntegerArray(readerThreadCount)
     val readTimings = new AtomicLongArray(readerThreadCount)
@@ -118,7 +117,7 @@ object FloodTest {
           var count = 0
           var polls = 0
           while (deadline > Time.now || queue.size > 0) {
-            val item = if (random.nextInt(100) < pollPercent) {
+            val item = if (random() % 100 < pollPercent) {
               polls += 1
               queue.poll()
             } else {

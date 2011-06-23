@@ -1,11 +1,20 @@
 package com.twitter.libkestrel
 
-import java.util.Random
 import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
 import java.util.concurrent.atomic._
 import java.util.concurrent.ConcurrentHashMap
 import com.twitter.util.{JavaTimer, Timer, Time, TimeoutException}
+
+class XorRandom {
+  var seed: Int = (System.nanoTime / 1000).toInt
+  def apply(): Int = {
+    seed ^= (seed << 13)
+    seed ^= (seed >> 17)
+    seed ^= (seed << 5)
+    seed
+  }
+}
 
 object Main {
   val version = "20110614"

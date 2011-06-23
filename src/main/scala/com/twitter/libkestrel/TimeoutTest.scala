@@ -1,6 +1,5 @@
 package com.twitter.libkestrel
 
-import java.util.Random
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.{AtomicInteger, AtomicIntegerArray}
 import scala.collection.JavaConverters._
@@ -106,7 +105,7 @@ object TimeoutTest {
       }
     }.toList
 
-    val random = new Random()
+    val random = new XorRandom()
     val range = (readTimeoutHigh.inMilliseconds - readTimeoutLow.inMilliseconds).toInt
     val received = (0 until writerThreadCount).map { i => new ConcurrentHashMap[Int, AtomicInteger] }.toArray
 
@@ -114,7 +113,7 @@ object TimeoutTest {
       new Thread() {
         override def run() {
           while (readerDeadline > Time.now) {
-            val timeout = readTimeoutHigh + random.nextInt(range + 1)
+            val timeout = readTimeoutHigh + random() % (range + 1)
             try {
               val item = queue.get(timeout.milliseconds)()
               item.split("/").map { _.toInt }.toList match {
