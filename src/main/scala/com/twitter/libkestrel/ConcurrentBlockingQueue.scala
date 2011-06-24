@@ -112,14 +112,14 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * Get the next item from the queue if one is immediately available.
    */
   def poll(): Option[A] = {
-    val promise = new Promise[Option[A]]
     if (queue.isEmpty) {
-      promise.setValue(None)
+      None
     } else {
+      val promise = new Promise[Option[A]]
       pollers.add(promise)
       handoff()
+      promise()
     }
-    promise()
   }
 
   private def get(timeout: Option[Duration]): Future[A] = {
