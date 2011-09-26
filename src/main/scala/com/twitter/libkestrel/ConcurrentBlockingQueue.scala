@@ -60,7 +60,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    */
   case class Waiter(timerTask: Option[TimerTask], promise: Promise[A])
   private[this] val waiters = new ConcurrentLinkedQueue[Waiter]
-  private[this] val waiterSet = new ConcurrentHashMap[Promise[A], Waiter]
+  private[this] val waiterSet = new ConcurrentHashMap[Promise[A], Promise[A]]
 
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
@@ -124,6 +124,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
 
   private def get(timeout: Option[Duration]): Future[A] = {
     val promise = new Promise[A]
+    waiterSet.put(promise, promise)
     val timerTask = timeout.map { t =>
       timer.schedule(t.fromNow) {
         if (waiterSet.remove(promise) ne null) {
@@ -131,9 +132,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
         }
       }
     }
-    val waiter = Waiter(timerTask, promise)
-    waiterSet.put(promise, waiter)
-    waiters.add(waiter)
+    waiters.add(Waiter(timerTask, promise))
     if (!queue.isEmpty) handoff()
     promise
   }
@@ -158,6 +157,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       }
     }
 
+    // FIXME: alternate which is checked first.
     var poller = pollers.poll()
     if (poller ne null) {
       val item = queue.poll()
