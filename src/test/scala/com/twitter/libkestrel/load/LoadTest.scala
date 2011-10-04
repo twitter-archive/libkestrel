@@ -1,4 +1,4 @@
-package com.twitter.libkestrel
+package com.twitter.libkestrel.load
 
 import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
@@ -16,7 +16,7 @@ class XorRandom {
   }
 }
 
-object Main {
+object LoadTest {
   val version = "20110614"
 
   def usage() {

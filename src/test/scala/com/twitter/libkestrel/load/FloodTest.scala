@@ -1,4 +1,5 @@
 package com.twitter.libkestrel
+package load
 
 import java.util.concurrent.{CountDownLatch, ConcurrentHashMap}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLongArray, AtomicIntegerArray}
