@@ -16,7 +16,7 @@ class XorRandom {
   }
 }
 
-object LoadTest {
+object QTest {
   val version = "20110614"
 
   def usage() {

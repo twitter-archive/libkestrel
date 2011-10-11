@@ -10,8 +10,8 @@ import com.twitter.sbt._
  * mean to add a dependency on exampleland version 1.0.3 from provider "com.example".
  */
 class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info) 
-  with NoisyDependencies 
-  with DefaultRepos 
+  with NoisyDependencies
+  with DefaultRepos
   with SubversionPublisher
   with PublishSourcesAndJavadocs
   with PublishSite
@@ -27,4 +27,15 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   val objenesis = "org.objenesis" % "objenesis" % "1.1" % "test"
 
   override def subversionRepository = Some("http://svn.local.twitter.com/maven")
+
+  // generate a jar that can be run for load tests.
+  def loadTestJarFilename = "libkestrel-tests-" + version.toString + ".jar"
+  def loadTestPaths = ((testCompilePath ##) ***) +++ ((mainCompilePath ##) ***)
+  def packageLoadTestsAction =
+    packageTask(loadTestPaths, outputPath, loadTestJarFilename, packageOptions) && task {
+      distPath.asFile.mkdirs()
+      FileUtilities.copyFlat(List(outputPath / loadTestJarFilename), distPath, log).left.toOption
+    }
+  lazy val packageLoadTests = packageLoadTestsAction
+  override def packageDistTask = packageLoadTestsAction && super.packageDistTask
 }
