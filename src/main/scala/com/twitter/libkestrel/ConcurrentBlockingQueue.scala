@@ -1,8 +1,8 @@
 package com.twitter.libkestrel
 
+import com.twitter.util._
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import java.util.concurrent.atomic.AtomicInteger
-import com.twitter.util._
 
 object ConcurrentBlockingQueue {
   /** What to do when the queue is full and a `put` is attempted (for the constructor). */
