@@ -217,12 +217,12 @@ class JournalFileSpec extends Specification with TempFolder {
       withTempFolder {
         val testFile = new File(folderName, "a1")
         writeFile(testFile, unhex("27 64 26 3 85 ff ff ff 7f"))
-        
+
         val j = JournalFile.openWriter(testFile, null, Duration.MaxValue)
         j.readNext() must throwA[IOException].like {
           case e: CorruptedJournalException => e.message == "item too large"
         }
-        
+
         val item = QueueItem(100, Time.fromMilliseconds(0), None,
           new Array[Byte](JournalFile.LARGEST_DATA.inBytes.toInt + 1))
         val j2 = JournalFile.createWriter(testFile, null, Duration.MaxValue)
