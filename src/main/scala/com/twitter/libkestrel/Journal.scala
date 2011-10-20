@@ -121,8 +121,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
    */
   class Reader(file: File) {
     private[this] var _head = 0L
-    // FIXME probably use ItemIdList:
-    private[this] val _doneSet = new mutable.HashSet[Long]()
+    private[this] val _doneSet = new ItemIdList()
 
     def readState() {
       val journalFile = JournalFile.openReader(file, timer, syncJournal)
@@ -130,7 +129,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         journalFile.foreach { entry =>
           entry match {
             case JournalFile.Record.ReadHead(id) => _head = id
-            case JournalFile.Record.ReadDone(ids) => _doneSet ++= ids
+            case JournalFile.Record.ReadDone(ids) => _doneSet.add(ids)
             case x => log.warning("Skipping unknown entry %s in read journal: %s", x, file)
           }
         }
@@ -149,12 +148,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     }
 
     def head: Long = this._head
-    def doneSet: Set[Long] = _doneSet.toSet
+    def doneSet: Set[Long] = _doneSet.toSeq.toSet
 
     def head_=(id: Long) {
       this._head = id
-      val toRemove = _doneSet.filter { _ <= _head }
-      _doneSet --= toRemove
+      val toRemove = _doneSet.toSeq.filter { _ <= _head }
+      _doneSet.remove(toRemove.toSet)
     }
 
     def commit(id: Long) {
@@ -162,10 +161,10 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         _head += 1
         while (_doneSet contains _head + 1) {
           _head += 1
-          _doneSet -= _head
+          _doneSet.remove(_head)
         }
       } else {
-        _doneSet += id
+        _doneSet.add(id)
       }
     }
   }
