@@ -17,7 +17,6 @@
 package com.twitter.libkestrel
 
 import com.twitter.conversions.storage._
-import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileInputStream, IOException}
 import java.nio.{ByteBuffer, ByteOrder}
@@ -100,8 +99,6 @@ object JournalFile {
 
 class JournalFile(file: File, timer: Timer, syncJournal: Duration) {
   import JournalFile._
-
-  private[this] val log = Logger.get(getClass)
 
   private[this] var writer: PeriodicSyncFile = null
   private[this] var reader: FileChannel = null
