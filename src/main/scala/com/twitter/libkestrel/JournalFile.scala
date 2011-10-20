@@ -97,7 +97,8 @@ object JournalFile {
   }
 }
 
-class JournalFile(file: File, timer: Timer, syncJournal: Duration) {
+class JournalFile(file: File, timer: Timer, syncJournal: Duration)
+extends Iterable[JournalFile.Record] {
   import JournalFile._
 
   private[this] var writer: PeriodicSyncFile = null
@@ -175,7 +176,7 @@ class JournalFile(file: File, timer: Timer, syncJournal: Duration) {
     writer.write(b)
   }
 
-  def readNext(): Option[JournalFile.Record] = {
+  def readNext(): Option[Record] = {
     val lastPosition = reader.position
     val b = buffer
     b.limit(1)
@@ -241,5 +242,15 @@ class JournalFile(file: File, timer: Timer, syncJournal: Duration) {
       }
       case _ => throw new CorruptedJournalException(lastPosition, file, "unknown command " + command)
     })
+  }
+
+  def iterator: Iterator[Record] = {
+    def next(): Stream[Record] = {
+      readNext() match {
+        case Some(entry) => new Stream.Cons(entry, next())
+        case None => Stream.Empty
+      }
+    }
+    next().iterator
   }
 }
