@@ -4,19 +4,17 @@ import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, IOException}
 import scala.collection.immutable
+import scala.collection.mutable
 
 /*
  *
- * journal:
+ * journal TODO:
  * - rotate to new file after X
  * - checkpoint reader
  * - read-behind pointer for reader
  * - clean up old files if they're dead
  */
 
-class Reader {
-
-}
 
 object Journal {
   def getQueueNamesFromFolder(path: File): Set[String] = {
@@ -26,65 +24,6 @@ object Journal {
       name.split('.')(0)
     }.toSet
   }
-
-/*  // list of
-  def filesForQueue(path: File):
-  /**
-   * Find all the archived (non-current) journal files for a queue, sort them in replay order (by
-   * timestamp), and erase the remains of any unfinished business that we find along the way.
-   */
-  @tailrec
-  def archivedFilesForQueue(path: File, queueName: String): List[String] = {
-    val totalFiles = path.list()
-    if (totalFiles eq null) {
-      // directory is gone.
-      Nil
-    } else {
-      val timedFiles = totalFiles.filter {
-        _.startsWith(queueName + ".")
-      }.map { filename =>
-        (filename, filename.split('.')(1).toLong)
-      }.sortBy { case (filename, timestamp) =>
-        timestamp
-      }.toList
-
-      if (cleanUpPackedFiles(path, timedFiles)) {
-        // probably only recurses once ever.
-        archivedFilesForQueue(path, queueName)
-      } else {
-        timedFiles.map { case (filename, timestamp) => filename }
-      }
-    }
-  }
-
-  def journalsForQueue(path: File, queueName: String): List[String] = {
-    archivedFilesForQueue(path, queueName) ++ List(queueName)
-  }
-
-  def journalsBefore(path: File, queueName: String, filename: String): Seq[String] = {
-    journalsForQueue(path, queueName).takeWhile { _ != filename }
-  }
-
-  def journalAfter(path: File, queueName: String, filename: String): Option[String] = {
-    journalsForQueue(path, queueName).dropWhile { _ != filename }.drop(1).headOption
-  }
-
-  val packerQueue = new LinkedBlockingQueue[PackRequest]()
-  val packer = BackgroundProcess.spawnDaemon("journal-packer") {
-    while (true) {
-      val request = packerQueue.take()
-      try {
-        request.journal.pack(request)
-        request.journal.outstandingPackRequests.decrementAndGet()
-      } catch {
-        case e: Throwable =>
-          Logger.get(getClass).error(e, "Uncaught exception in packer: %s", e)
-      }
-    }
-  }
-}
-
-*/
 }
 
 /**
@@ -98,8 +37,10 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   val prefix = new File(queuePath, queueName)
 
   var idMap = immutable.TreeMap.empty[Long, File]
+  var readerMap = immutable.HashMap.empty[String, Reader]
 
   buildIdMap()
+  buildReaderMap()
 
   /**
    * Scan timestamp files for this queue, and build a map of (item id -> file) for the first id
@@ -127,7 +68,9 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
   def writerFiles() = {
     queuePath.list().filter { name =>
-      name.startsWith(queueName + ".") && !name.split("\\.")(1).find { !_.isDigit }.isDefined
+      name.startsWith(queueName + ".") &&
+        !name.contains("~") &&
+        !name.split("\\.")(1).find { !_.isDigit }.isDefined
     }.map { name =>
       new File(queuePath, name)
     }
@@ -135,24 +78,101 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
   def readerFiles() = {
     queuePath.list().filter { name =>
-      name.startsWith(queueName + ".read.")
+      name.startsWith(queueName + ".read.") && !name.contains("~")
     }.map { name =>
       new File(queuePath, name)
     }
   }
-  
+
   def fileForId(id: Long): Option[File] = {
     idMap.to(id).lastOption.map { case (k, v) => v }
   }
-}
 
-/*
- *   def calculateArchiveSize() {
-    val files = Journal.archivedFilesForQueue(queuePath, queueName)
-    archivedSize = files.foldLeft(0L) { (sum, filename) =>
-      sum + new File(queuePath, filename).length()
+  def buildReaderMap() {
+    var newMap = immutable.HashMap.empty[String, Reader]
+    readerFiles().foreach { file =>
+      val name = file.getName.split("\\.")(2)
+      try {
+        val reader = new Reader(file)
+        reader.readState()
+        newMap = newMap + (name -> reader)
+      } catch {
+        case e: IOException => log.warning("Skipping corrupted reader file: %s", file)
+      }
+    }
+    synchronized {
+      readerMap = newMap
     }
   }
+
+  def calculateArchiveSize() = {
+    writerFiles().foldLeft(0L) { (sum, file) => sum + file.length() }
+  }
+
+  def close() {
+    // FIXME
+  }
+
+  /**
+   * Track state for a queue reader. Every item prior to the "head" pointer (including the "head"
+   * pointer itself) has been read by this reader. Separately, "doneSet" is a set of items that
+   * have been read out of order, usually because they refer to transactional reads that were
+   * confirmed out of order.
+   */
+  class Reader(file: File) {
+    private[this] var _head = 0L
+    // FIXME probably use ItemIdList:
+    private[this] val _doneSet = new mutable.HashSet[Long]()
+
+    def readState() {
+      val journalFile = JournalFile.openReader(file, timer, syncJournal)
+      try {
+        journalFile.foreach { entry =>
+          entry match {
+            case JournalFile.Record.ReadHead(id) => _head = id
+            case JournalFile.Record.ReadDone(ids) => _doneSet ++= ids
+            case x => log.warning("Skipping unknown entry %s in read journal: %s", x, file)
+          }
+        }
+      } finally {
+        journalFile.close()
+      }
+    }
+
+    def checkpoint() {
+      val newFile = new File(file.getParent, file.getName + "~~")
+      val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
+      newJournalFile.readHead(_head)
+      newJournalFile.readDone(_doneSet.toSeq)
+      newJournalFile.close()
+      newFile.renameTo(file)
+    }
+
+    def head: Long = this._head
+    def doneSet: Set[Long] = _doneSet.toSet
+
+    def head_=(id: Long) {
+      this._head = id
+      val toRemove = _doneSet.filter { _ <= _head }
+      _doneSet --= toRemove
+    }
+
+    def commit(id: Long) {
+      if (id == _head + 1) {
+        _head += 1
+        while (_doneSet contains _head + 1) {
+          _head += 1
+          _doneSet -= _head
+        }
+      } else {
+        _doneSet += id
+      }
+    }
+  }
+}
+
+
+/*
 
   private def uniqueFile(infix: String, suffix: String = ""): File = {
     var file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
@@ -181,16 +201,6 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     checkpoint
   }
 
-
-  def close() {
-    writer.close()
-    reader.foreach { _.close() }
-    reader = None
-    readerFilename = None
-    closed = true
-    waitForPacksToFinish()
-  }
-
   def erase() {
     try {
       close()
@@ -206,46 +216,3 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
  */
 
-
-/*def replayFile(name: String, filename: String)(f: JournalItem => Unit): Unit = {
-    log.debug("Replaying '%s' file %s", name, filename)
-    size = 0
-    var lastUpdate = 0L
-    try {
-      val in = new FileInputStream(new File(queuePath, filename).getCanonicalPath).getChannel
-      replayer = Some(in)
-      replayerFilename = Some(filename)
-      try {
-        var done = false
-        do {
-          readJournalEntry(in) match {
-            case (JournalItem.EndOfFile, _) =>
-              done = true
-            case (x, itemsize) =>
-              size += itemsize
-              f(x)
-              if (size > lastUpdate + 10.megabytes.inBytes) {
-                log.info("Continuing to read '%s' journal (%s); %s so far...", name, filename, size.bytes.toHuman())
-                lastUpdate = size
-              }
-          }
-        } while (!done)
-      } catch {
-        case e: BrokenItemException =>
-          log.error(e, "Exception replaying journal for '%s': %s", name, filename)
-          log.error("DATA MAY HAVE BEEN LOST! Truncated entry will be deleted.")
-          truncateJournal(e.lastValidPosition)
-      }
-    } catch {
-      case e: FileNotFoundException =>
-        log.info("No transaction journal for '%s'; starting with empty queue.", name)
-      case e: IOException =>
-        log.error(e, "Exception replaying journal for '%s': %s", name, filename)
-        log.error("DATA MAY HAVE BEEN LOST!")
-        // this can happen if the server hardware died abruptly in the middle
-        // of writing a journal. not awesome but we should recover.
-    }
-    replayer = None
-    replayerFilename = None
-  }
-*/

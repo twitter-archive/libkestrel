@@ -27,7 +27,7 @@ class JournalSpec extends Specification with TempFolder {
       withTempFolder {
         List(
           "test.901", "test.8000", "test.3leet", "test.read.client1", "test.read.client2",
-          "test.readmenot", "test.1", "test.5005"
+          "test.readmenot", "test.1", "test.5005", "test.read.client1~~"
         ).foreach { name =>
           new File(folderName, name).createNewFile()
         }
@@ -62,6 +62,69 @@ class JournalSpec extends Specification with TempFolder {
         j.fileForId(902) mustEqual Some(new File(folderName, "test.901"))
         j.fileForId(6666) mustEqual Some(new File(folderName, "test.5005"))
         j.fileForId(9999) mustEqual Some(new File(folderName, "test.8000"))
+      }
+    }
+  }
+
+  "Journal#Reader" should {
+    "write a checkpoint" in {
+      withTempFolder {
+        val file = new File(folderName, "a1")
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val reader = new j.Reader(file)
+        reader.head = 123L
+        reader.commit(125L)
+        reader.commit(130L)
+        reader.checkpoint()
+
+        JournalFile.openReader(file, null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(123L),
+          JournalFile.Record.ReadDone(Array(125L, 130L))
+        )
+      }
+    }
+
+    "read a checkpoint" in {
+      withTempFolder {
+        val file = new File(folderName, "a1")
+        val jf = JournalFile.createReader(file, null, Duration.MaxValue)
+        jf.readHead(900L)
+        jf.readDone(Array(902L, 903L))
+        jf.close()
+
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val reader = new j.Reader(file)
+        reader.readState()
+        reader.head mustEqual 900L
+        reader.doneSet.toList.sorted mustEqual List(902L, 903L)
+      }
+    }
+
+    "track committed items" in {
+      withTempFolder {
+        val file = new File(folderName, "a1")
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val reader = new j.Reader(file)
+        reader.head = 123L
+
+        reader.commit(124L)
+        reader.head mustEqual 124L
+        reader.doneSet.toList.sorted mustEqual List()
+
+        reader.commit(126L)
+        reader.commit(127L)
+        reader.commit(129L)
+        reader.head mustEqual 124L
+        reader.doneSet.toList.sorted mustEqual List(126L, 127L, 129L)
+
+        reader.commit(125L)
+        reader.head mustEqual 127L
+        reader.doneSet.toList.sorted mustEqual List(129L)
+
+        reader.commit(130L)
+        reader.commit(128L)
+        reader.head mustEqual 130L
+        reader.doneSet.toList.sorted mustEqual List()
       }
     }
   }
