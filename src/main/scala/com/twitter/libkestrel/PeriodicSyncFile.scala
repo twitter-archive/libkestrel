@@ -26,17 +26,19 @@ class PeriodicSyncFile(file: File, timer: Timer, period: Duration) {
   }
 
   private def fsync() {
+    // "fsync needs to be synchronized since the timer thread could be running at the same time as a journal rotation."
     synchronized {
       // race: we could underestimate the number of completed writes. that's okay.
       val completed = promises.size
       try {
         writer.force(false)
       } catch {
-        case e: IOException =>
+        case e: IOException => {
           for (i <- 0 until completed) {
             promises.poll().setException(e)
           }
-        return;
+          return
+        }
       }
 
       for (i <- 0 until completed) {
