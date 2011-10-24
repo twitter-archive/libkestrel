@@ -16,12 +16,13 @@
 
 package com.twitter.libkestrel
 
+import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
 import org.specs.Specification
 
-class JournalSpec extends Specification with TempFolder {
+class JournalSpec extends Specification with TempFolder with TestLogging {
   "Journal" should {
     "find reader/writer files" in {
       withTempFolder {

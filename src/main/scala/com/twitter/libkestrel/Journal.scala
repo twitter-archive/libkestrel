@@ -1,7 +1,8 @@
 package com.twitter.libkestrel
 
-import com.twitter.logging.Logger
 import com.twitter.concurrent.Serialized
+import com.twitter.conversions.storage._
+import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileOutputStream, IOException}
 import scala.annotation.tailrec
@@ -15,7 +16,7 @@ import scala.collection.mutable
  *   X checkpoint reader
  *   X read-behind pointer for reader
  *   - clean up old files if they're dead
- *   - fix readers with a too-far-future head
+ *   X fix readers with a too-far-future head
  */
 
 
@@ -116,7 +117,15 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       try {
         val journalFile = JournalFile.openWriter(file, timer, syncJournal)
         try {
+          log.info("Scanning journal '%s' file %s", queueName, file)
+          var lastUpdate = 0L
           journalFile.foreach { entry =>
+            val position = journalFile.position
+            if (position >= lastUpdate + 10.megabytes.inBytes) {
+              log.info("Continuing to read '%s' file %s; %s so far...", queueName, file,
+                position.bytes.toHuman)
+              lastUpdate += 10.megabytes.inBytes
+            }
             entry match {
               case JournalFile.Record.Put(item) => _tailId = item.id
               case _ =>
@@ -124,7 +133,8 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
           }
         } catch {
           case e @ CorruptedJournalException(position, file, message) => {
-            log.warning("Corrupted journal %s at position %d -- truncating", file, position)
+            log.error("Corrupted journal %s at position %d; truncating. DATA MAY HAVE BEEN LOST!",
+              file, position)
             val trancateWriter = new FileOutputStream(file, true).getChannel
             try {
               trancateWriter.truncate(position)
@@ -144,11 +154,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
           openJournal()
         }
         case e: IOException => {
-          log.error("Unable to open journal %s -- aborting!", file)
+          log.error("Unable to open journal %s; aborting!", file)
           throw e
         }
       }
     } else {
+      log.info("No transaction journal for '%s'; starting with empty queue.", queueName)
       rotate()
     }
   }

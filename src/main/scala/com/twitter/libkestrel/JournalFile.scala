@@ -99,7 +99,8 @@ object JournalFile {
 }
 
 class JournalFile(file: File, timer: Timer, syncJournal: Duration)
-extends Iterable[JournalFile.Record] {
+  extends Iterable[JournalFile.Record]
+{
   import JournalFile._
 
   private[this] var writer: PeriodicSyncFile = null
@@ -271,4 +272,6 @@ extends Iterable[JournalFile.Record] {
     }
     next().iterator
   }
+
+  def position = reader.position
 }
