@@ -182,18 +182,27 @@ extends Iterable[JournalFile.Record] {
     val b = buffer
     b.limit(1)
     var x: Int = 0
-    do {
-      x = reader.read(b)
-    } while (b.position < b.limit && x >= 0)
-
+    try {
+      do {
+        x = reader.read(b)
+      } while (b.position < b.limit && x >= 0)
+    } catch {
+      case e: IOException =>
+        throw new CorruptedJournalException(lastPosition, file, e.toString)
+    }
     if (x < 0) return None
     val command = (b.get(0) >> 4) & 0xf
     val headerSize = (b.get(0) & 0xf)
     b.clear()
     b.limit(headerSize * 4)
-    do {
-      x = reader.read(b)
-    } while (b.position < b.limit && x >= 0)
+    try {
+      do {
+        x = reader.read(b)
+      } while (b.position < b.limit && x >= 0)
+    } catch {
+      case e: IOException =>
+        throw new CorruptedJournalException(lastPosition, file, e.toString)
+    }
     b.rewind()
 
     var data: Array[Byte] = null
@@ -205,9 +214,14 @@ extends Iterable[JournalFile.Record] {
 
       data = new Array[Byte](dataSize)
       val dataBuffer = ByteBuffer.wrap(data)
-      do {
-        x = reader.read(dataBuffer)
-      } while (dataBuffer.position < dataBuffer.limit && x >= 0)
+      try {
+        do {
+          x = reader.read(dataBuffer)
+        } while (dataBuffer.position < dataBuffer.limit && x >= 0)
+      } catch {
+        case e: IOException =>
+          throw new CorruptedJournalException(lastPosition, file, e.toString)
+      }
     }
 
     if (x < 0) throw new CorruptedJournalException(lastPosition, file, "truncated entry")
