@@ -1,8 +1,9 @@
 package com.twitter.libkestrel
 
 import com.twitter.logging.Logger
+import com.twitter.concurrent.Serialized
 import com.twitter.util._
-import java.io.{File, IOException}
+import java.io.{File, FileOutputStream, IOException}
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
@@ -14,6 +15,7 @@ import scala.collection.mutable
  *   X checkpoint reader
  *   X read-behind pointer for reader
  *   - clean up old files if they're dead
+ *   - fix readers with a too-far-future head
  */
 
 
@@ -32,7 +34,9 @@ object Journal {
  * - list of adds (<prefix>.<timestamp>)
  * - one state file for each reader (<prefix>.read.<name>)
  */
-class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Duration) {
+class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Duration)
+  extends Serialized
+{
   private[this] val log = Logger.get(getClass)
 
   val prefix = new File(queuePath, queueName)
@@ -40,8 +44,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   @volatile var idMap = immutable.TreeMap.empty[Long, File]
   @volatile var readerMap = immutable.HashMap.empty[String, Reader]
 
+  @volatile private[this] var _journalFile: JournalFile = _
+  @volatile private[this] var headId = 0L
+
   buildIdMap()
   buildReaderMap()
+  openJournal()
 
   /**
    * Scan timestamp files for this queue, and build a map of (item id -> file) for the first id
@@ -102,6 +110,58 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     readerMap = newMap
   }
 
+  private[this] def openJournal() {
+    if (idMap.size > 0) {
+      val (id, file) = idMap.last
+      try {
+        val journalFile = JournalFile.openWriter(file, timer, syncJournal)
+        try {
+          journalFile.foreach { entry =>
+            entry match {
+              case JournalFile.Record.Put(item) => headId = item.id
+              case _ =>
+            }
+          }
+        } catch {
+          case CorruptedJournalException(position, file, message) => {
+            log.warning("Corrupted journal %s at position %d -- truncating", file, position)
+            val trancateWriter = new FileOutputStream(file, true).getChannel
+            try {
+              trancateWriter.truncate(position)
+            } finally {
+              trancateWriter.close()
+            }
+          }
+        } finally {
+          journalFile.close()
+        }
+        _journalFile = JournalFile.append(file, timer, syncJournal)
+      } catch {
+        case e: IOException => {
+          log.error("Unable to open journal %s -- aborting!", file)
+          throw e
+        }
+      }
+    } else {
+      rotate()
+    }
+  }
+
+  private[this] def uniqueFile(infix: String = ".", suffix: String = ""): File = {
+    var file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
+    while (!file.createNewFile()) {
+      Thread.sleep(1)
+      file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
+    }
+    file
+  }
+
+  private[this] def rotate() {
+    val newFile = uniqueFile()
+    _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
+    idMap = idMap + (headId + 1 -> newFile)
+  }
+
   // need to pass in a "head" in case we need to make a new reader.
   def reader(name: String, head: Long): Reader = {
     readerMap.get(name).getOrElse {
@@ -129,6 +189,15 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     readerMap.foreach { case (name, reader) =>
       reader.checkpoint()
     }
+  }
+
+  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[Long] = {
+    var id = 0L
+    serialized {
+      headId += 1
+      id = headId
+      _journalFile.put(QueueItem(headId, addTime, expireTime, data))
+    }.map { _ => id }
   }
 
   /**
@@ -245,14 +314,6 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
 /*
 
-  private def uniqueFile(infix: String, suffix: String = ""): File = {
-    var file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
-    while (!file.createNewFile()) {
-      Thread.sleep(1)
-      file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
-    }
-    file
-  }
 
   def rotate(reservedItems: Seq[QItem], setCheckpoint: Boolean): Option[Checkpoint] = {
     writer.close()

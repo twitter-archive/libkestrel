@@ -16,27 +16,35 @@
 
 package com.twitter.libkestrel
 
+import com.twitter.logging.{ConsoleHandler, Formatter, Logger, TestLogging}
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
 import org.specs.Specification
 
-class JournalSpec extends Specification with TempFolder {
+class JournalSpec extends Specification with TempFolder with TestLogging {
   "Journal" should {
+    doBefore {
+      Logger.clearHandlers()
+      Logger.get("").addHandler(new ConsoleHandler(new Formatter(), None))
+    }
+
     "find reader/writer files" in {
       withTempFolder {
-        List(
-          "test.901", "test.8000", "test.3leet", "test.read.client1", "test.read.client2",
-          "test.readmenot", "test.1", "test.5005", "test.read.client1~~"
-        ).foreach { name =>
-          new File(folderName, name).createNewFile()
-        }
+        Time.withCurrentTimeFrozen { timeMutator =>
+          List(
+            "test.901", "test.8000", "test.3leet", "test.read.client1", "test.read.client2",
+            "test.readmenot", "test.1", "test.5005", "test.read.client1~~"
+          ).foreach { name =>
+            new File(folderName, name).createNewFile()
+          }
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-        j.writerFiles().map { _.getName }.toSet mustEqual
-          Set("test.901", "test.8000", "test.1", "test.5005")
-        j.readerFiles().map { _.getName }.toSet mustEqual
-          Set("test.read.client1", "test.read.client2")
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          j.writerFiles().map { _.getName }.toSet mustEqual
+            Set("test.901", "test.8000", "test.1", "test.5005", "test." + Time.now.inMilliseconds)
+          j.readerFiles().map { _.getName }.toSet mustEqual
+            Set("test.read.client1", "test.read.client2")
+        }
       }
     }
 
@@ -103,6 +111,82 @@ class JournalSpec extends Specification with TempFolder {
           JournalFile.Record.ReadHead(101L),
           JournalFile.Record.ReadDone(Array[Long]())
         )
+      }
+    }
+
+    "start with an empty journal" in {
+      withTempFolder {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          j.put("hi".getBytes, Time.now, None)() mustEqual 1L
+          j.close()
+
+          val file = new File(folderName, "test." + Time.now.inMilliseconds)
+          val jf = JournalFile.openWriter(file, null, Duration.MaxValue)
+          jf.readNext() mustEqual
+            Some(JournalFile.Record.Put(QueueItem(1L, roundedTime, None, "hi".getBytes)))
+          jf.close()
+        }
+      }
+    }
+
+    "append new items to the end of the last journal" in {
+      withTempFolder {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
+          val file1 = new File(folderName, "test.1")
+          val jf1 = JournalFile.createWriter(file1, null, Duration.MaxValue)
+          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf1.close()
+          val file2 = new File(folderName, "test.2")
+          val jf2 = JournalFile.createWriter(file2, null, Duration.MaxValue)
+          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+          jf2.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          j.put("hi".getBytes, Time.now, None)() mustEqual 103L
+          j.close()
+
+          val jf3 = JournalFile.openWriter(file2, null, Duration.MaxValue)
+          jf3.readNext() mustEqual
+            Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "102".getBytes)))
+          jf3.readNext() mustEqual
+            Some(JournalFile.Record.Put(QueueItem(103L, roundedTime, None, "hi".getBytes)))
+          jf3.readNext() mustEqual None
+          jf3.close()
+        }
+      }
+    }
+
+    "truncate corrupted journal" in {
+      withTempFolder {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
+
+          // write 2 valid entries, but truncate the last one to make it corrupted.
+          val file = new File(folderName, "test.1")
+          val jf = JournalFile.createWriter(file, null, Duration.MaxValue)
+          jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf.put(QueueItem(102L, Time.now, None, "102".getBytes))
+          jf.close()
+
+          val raf = new RandomAccessFile(file, "rw")
+          raf.setLength(file.length - 1)
+          raf.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          j.put("hi".getBytes, Time.now, None)() mustEqual 102L
+          j.close()
+
+          val jf2 = JournalFile.openWriter(file, null, Duration.MaxValue)
+          jf2.readNext() mustEqual
+            Some(JournalFile.Record.Put(QueueItem(101L, roundedTime, None, "101".getBytes)))
+          jf2.readNext() mustEqual
+            Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "hi".getBytes)))
+          jf2.readNext() mustEqual None
+          jf2.close()
+        }
       }
     }
   }
@@ -232,28 +316,6 @@ class JournalSpec extends Specification with TempFolder {
           new String(item.data) mustEqual "104"
         }
       }
-/*
-      "avoid confirmed items" in {
-        println("START-2")
-        withTempFolder {
-          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
-          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
-          jf1.close()
-
-          val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
-          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
-          jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
-          jf2.close()
-
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          val reader = j.reader("client", 100L)
-          reader.commit(102L)
-          reader.startReadBehind(100L)
-          reader.nextReadBehind().id mustEqual 101L
-          reader.nextReadBehind().id mustEqual 103L
-        }
-      }*/
     }
   }
 }
