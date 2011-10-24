@@ -123,7 +123,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
             }
           }
         } catch {
-          case CorruptedJournalException(position, file, message) => {
+          case e @ CorruptedJournalException(position, file, message) => {
             log.warning("Corrupted journal %s at position %d -- truncating", file, position)
             val trancateWriter = new FileOutputStream(file, true).getChannel
             try {
@@ -131,12 +131,18 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
             } finally {
               trancateWriter.close()
             }
+            throw e
           }
         } finally {
           journalFile.close()
         }
         _journalFile = JournalFile.append(file, timer, syncJournal)
       } catch {
+        case e: CorruptedJournalException => {
+          // we truncated it. try again.
+          headId = 0
+          openJournal()
+        }
         case e: IOException => {
           log.error("Unable to open journal %s -- aborting!", file)
           throw e

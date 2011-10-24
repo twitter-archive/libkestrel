@@ -16,19 +16,13 @@
 
 package com.twitter.libkestrel
 
-import com.twitter.logging.{ConsoleHandler, Formatter, Logger, TestLogging}
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
 import org.specs.Specification
 
-class JournalSpec extends Specification with TempFolder with TestLogging {
+class JournalSpec extends Specification with TempFolder {
   "Journal" should {
-    doBefore {
-      Logger.clearHandlers()
-      Logger.get("").addHandler(new ConsoleHandler(new Formatter(), None))
-    }
-
     "find reader/writer files" in {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
