@@ -231,5 +231,18 @@ class JournalFileSpec extends Specification with TempFolder {
         }
       }
     }
+    
+    "be okay with commands it doesn't know" in {
+      withTempFolder {
+        val fileData = "26 3c 26 3 f1 4 0 0 0 ff ff ff ff 2 0 40 0 0 0 0 0 0"
+        val testFile = new File(folderName, "a1")
+        writeFile(testFile, unhex(fileData))
+        
+        val j = JournalFile.openReader(testFile, null, Duration.MaxValue)
+        j.readNext() mustEqual Some(JournalFile.Record.Unknown(15))
+        j.readNext() mustEqual Some(JournalFile.Record.ReadHead(16384))
+        j.readNext() mustEqual None
+      }
+    }
   }
 }
