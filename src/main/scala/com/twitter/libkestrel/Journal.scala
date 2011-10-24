@@ -44,8 +44,8 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   @volatile var idMap = immutable.TreeMap.empty[Long, File]
   @volatile var readerMap = immutable.HashMap.empty[String, Reader]
 
-  @volatile private[this] var _journalFile: JournalFile = _
-  @volatile private[this] var headId = 0L
+  @volatile private[this] var _journalFile: JournalFile = null
+  @volatile private[this] var _headId = 0L
 
   buildIdMap()
   buildReaderMap()
@@ -118,7 +118,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         try {
           journalFile.foreach { entry =>
             entry match {
-              case JournalFile.Record.Put(item) => headId = item.id
+              case JournalFile.Record.Put(item) => _headId = item.id
               case _ =>
             }
           }
@@ -140,7 +140,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       } catch {
         case e: CorruptedJournalException => {
           // we truncated it. try again.
-          headId = 0
+          _headId = 0
           openJournal()
         }
         case e: IOException => {
@@ -165,7 +165,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   private[this] def rotate() {
     val newFile = uniqueFile()
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
-    idMap = idMap + (headId + 1 -> newFile)
+    idMap = idMap + (_headId + 1 -> newFile)
   }
 
   // need to pass in a "head" in case we need to make a new reader.
@@ -200,9 +200,9 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[Long] = {
     var id = 0L
     serialized {
-      headId += 1
-      id = headId
-      _journalFile.put(QueueItem(headId, addTime, expireTime, data))
+      _headId += 1
+      id = _headId
+      _journalFile.put(QueueItem(_headId, addTime, expireTime, data))
     }.map { _ => id }
   }
 
