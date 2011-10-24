@@ -54,6 +54,19 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
     }
 
+    "erase all journal files" in {
+      withTempFolder {
+        List("test.1", "test.read.1", "test.read.1~~", "testbad").foreach { name =>
+          new File(folderName, name).createNewFile()
+        }
+
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        j.erase()
+
+        new File(folderName).list.toList mustEqual List("testbad")
+      }
+    }
+
     "fileForId" in {
       withTempFolder {
         List(
@@ -314,10 +327,15 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
           val reader = j.reader("client1")
           reader.head = 100L
+          reader.inReadBehind mustEqual false
           reader.startReadBehind(100L)
+          reader.inReadBehind mustEqual true
           val item = reader.nextReadBehind()
           item.id mustEqual 101L
           new String(item.data) mustEqual "101"
+
+          reader.endReadBehind()
+          reader.inReadBehind mustEqual false
         }
       }
 

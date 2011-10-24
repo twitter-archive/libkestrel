@@ -48,7 +48,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   @volatile private[this] var _journalFile: JournalFile = null
   @volatile private[this] var _tailId = 0L
 
-  cleanupTemps()
+  removeTemporaryFiles()
   buildIdMap()
   openJournal()
   buildReaderMap()
@@ -75,9 +75,9 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     idMap = newMap
   }
 
-  def cleanupTemps() {
+  def removeTemporaryFiles() {
     queuePath.list().foreach { name =>
-      if (name contains "~") new File(queuePath, name).delete()
+      if (name contains "~~") new File(queuePath, name).delete()
     }
   }
 
@@ -171,17 +171,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     }
   }
 
-  private[this] def uniqueFile(infix: String = ".", suffix: String = ""): File = {
-    var file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
-    while (!file.createNewFile()) {
-      Thread.sleep(1)
-      file = new File(queuePath, queueName + infix + Time.now.inMilliseconds + suffix)
-    }
-    file
-  }
-
   private[this] def rotate() {
-    val newFile = uniqueFile()
+    var newFile = new File(queuePath, queueName + "." + Time.now.inMilliseconds)
+    while (!newFile.createNewFile()) {
+      Thread.sleep(1)
+      newFile = new File(queuePath, queueName + "." + Time.now.inMilliseconds)
+    }
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
     idMap = idMap + (_tailId + 1 -> newFile)
   }
@@ -207,6 +202,16 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
   def close() {
     // FIXME
+  }
+
+  /**
+   * Get rid of all journal files for this queue.
+   */
+  def erase() {
+    close()
+    readerFiles().foreach { _.delete() }
+    writerFiles().foreach { _.delete() }
+    removeTemporaryFiles()
   }
 
   def checkpoint() {
@@ -333,6 +338,8 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       _readBehind.foreach { _.close() }
       _readBehind = None
     }
+
+    def inReadBehind = _readBehind.isDefined
   }
 }
 
@@ -358,17 +365,6 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     checkpoint
   }
 
-  def erase() {
-    try {
-      close()
-      Journal.archivedFilesForQueue(queuePath, queueName).foreach { filename =>
-        new File(queuePath, filename).delete()
-      }
-      queueFile.delete()
-    } catch {
-      case _ =>
-    }
-  }
 
 
  */
