@@ -43,6 +43,17 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
     }
 
+    "erase old temporary files" in {
+      withTempFolder {
+        List("test.1", "test.read.1", "test.read.1~~").foreach { name =>
+          new File(folderName, name).createNewFile()
+        }
+
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        new File(folderName, "test.read.1~~").exists() mustEqual false
+      }
+    }
+
     "fileForId" in {
       withTempFolder {
         List(

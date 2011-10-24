@@ -48,6 +48,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   @volatile private[this] var _journalFile: JournalFile = null
   @volatile private[this] var _tailId = 0L
 
+  cleanupTemps()
   buildIdMap()
   openJournal()
   buildReaderMap()
@@ -72,6 +73,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       }
     }
     idMap = newMap
+  }
+
+  def cleanupTemps() {
+    queuePath.list().foreach { name =>
+      if (name contains "~") new File(queuePath, name).delete()
+    }
   }
 
   def writerFiles() = {
