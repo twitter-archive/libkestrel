@@ -45,11 +45,11 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   @volatile var readerMap = immutable.HashMap.empty[String, Reader]
 
   @volatile private[this] var _journalFile: JournalFile = null
-  @volatile private[this] var _headId = 0L
+  @volatile private[this] var _tailId = 0L
 
   buildIdMap()
-  buildReaderMap()
   openJournal()
+  buildReaderMap()
 
   /**
    * Scan timestamp files for this queue, and build a map of (item id -> file) for the first id
@@ -118,7 +118,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         try {
           journalFile.foreach { entry =>
             entry match {
-              case JournalFile.Record.Put(item) => _headId = item.id
+              case JournalFile.Record.Put(item) => _tailId = item.id
               case _ =>
             }
           }
@@ -140,7 +140,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       } catch {
         case e: CorruptedJournalException => {
           // we truncated it. try again.
-          _headId = 0
+          _tailId = 0
           openJournal()
         }
         case e: IOException => {
@@ -165,17 +165,17 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   private[this] def rotate() {
     val newFile = uniqueFile()
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
-    idMap = idMap + (_headId + 1 -> newFile)
+    idMap = idMap + (_tailId + 1 -> newFile)
   }
 
-  // need to pass in a "head" in case we need to make a new reader.
-  def reader(name: String, head: Long): Reader = {
+  // warning: set up your chaining before calling this. _tailId could increment during this method.
+  def reader(name: String): Reader = {
     readerMap.get(name).getOrElse {
       // grab a lock so only one thread does this potentially slow thing at once
       synchronized {
         readerMap.get(name).getOrElse {
           val reader = new Reader(new File(queuePath, queueName + ".read." + name))
-          reader.head = head
+          reader.head = _tailId
           readerMap = readerMap + (name -> reader)
           reader
         }
@@ -197,13 +197,13 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     }
   }
 
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[Long] = {
-    var id = 0L
+  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[(Long, Future[Unit])] = {
     serialized {
-      _headId += 1
-      id = _headId
-      _journalFile.put(QueueItem(_headId, addTime, expireTime, data))
-    }.map { _ => id }
+      _tailId += 1
+      val id = _tailId
+      val future = _journalFile.put(QueueItem(_tailId, addTime, expireTime, data))
+      (id, future)
+    }
   }
 
   /**
@@ -224,13 +224,14 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         journalFile.foreach { entry =>
           entry match {
             case JournalFile.Record.ReadHead(id) => _head = id
-            case JournalFile.Record.ReadDone(ids) => _doneSet.add(ids)
+            case JournalFile.Record.ReadDone(ids) => _doneSet.add(ids.filter { _ <= _tailId })
             case x => log.warning("Skipping unknown entry %s in read journal: %s", x, file)
           }
         }
       } finally {
         journalFile.close()
       }
+      _head = _head min _tailId
     }
 
     /**

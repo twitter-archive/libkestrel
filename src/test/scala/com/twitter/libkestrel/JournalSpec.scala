@@ -75,10 +75,13 @@ class JournalSpec extends Specification with TempFolder {
           jf.readDone(Array(102L))
           jf.close()
         }
+        val jf = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+        jf.put(QueueItem(105L, Time.now, None, "hi".getBytes))
+        jf.close()
 
         val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-        j.reader("client1", 0L).commit(101L)
-        j.reader("client2", 0L).commit(103L)
+        j.reader("client1").commit(101L)
+        j.reader("client2").commit(103L)
         j.checkpoint()
         j.close()
 
@@ -97,8 +100,10 @@ class JournalSpec extends Specification with TempFolder {
     "make new reader" in {
       withTempFolder {
         val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-        j.reader("new", 100L).commit(101L)
-        j.reader("new", 100L).checkpoint()
+        var r = j.reader("new")
+        r.head = 100L
+        r.commit(101L)
+        r.checkpoint()
         j.close()
 
         JournalFile.openReader(new File(folderName, "test.read.new"), null, Duration.MaxValue).toList mustEqual List(
@@ -108,12 +113,45 @@ class JournalSpec extends Specification with TempFolder {
       }
     }
 
+    /*
+     * rationale:
+     * this can happen if a write journal is corrupted/truncated, losing the last few items, and
+     * a reader had already written a state file out claiming to have finished processing the
+     * items that are now lost.
+     */
+    "recover a reader with an incorrect head" in {
+      withTempFolder {
+        // create main journal
+        val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+        jf1.put(QueueItem(400L, Time.now, None, "hi".getBytes))
+        jf1.close()
+
+        // create readers with impossible ids
+        val jf2 = JournalFile.createReader(new File(folderName, "test.read.1"), null, Duration.MaxValue)
+        jf2.readHead(402L)
+        jf2.close()
+        val jf3 = JournalFile.createReader(new File(folderName, "test.read.2"), null, Duration.MaxValue)
+        jf3.readHead(390L)
+        jf3.readDone(Array(395L, 403L))
+        jf3.close()
+
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val r1 = j.reader("1")
+        r1.head mustEqual 400L
+        r1.doneSet mustEqual Set()
+        val r2 = j.reader("2")
+        r2.head mustEqual 390L
+        r2.doneSet mustEqual Set(395L)
+      }
+    }
+
     "start with an empty journal" in {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
           val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          j.put("hi".getBytes, Time.now, None)() mustEqual 1L
+          val (id, future) = j.put("hi".getBytes, Time.now, None)()
+          id mustEqual 1L
           j.close()
 
           val file = new File(folderName, "test." + Time.now.inMilliseconds)
@@ -139,7 +177,8 @@ class JournalSpec extends Specification with TempFolder {
           jf2.close()
 
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          j.put("hi".getBytes, Time.now, None)() mustEqual 103L
+          val (id, future) = j.put("hi".getBytes, Time.now, None)()
+          id mustEqual 103L
           j.close()
 
           val jf3 = JournalFile.openWriter(file2, null, Duration.MaxValue)
@@ -170,7 +209,8 @@ class JournalSpec extends Specification with TempFolder {
           raf.close()
 
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          j.put("hi".getBytes, Time.now, None)() mustEqual 102L
+          val (id, future) = j.put("hi".getBytes, Time.now, None)()
+          id mustEqual 102L
           j.close()
 
           val jf2 = JournalFile.openWriter(file, null, Duration.MaxValue)
@@ -210,6 +250,10 @@ class JournalSpec extends Specification with TempFolder {
         jf.readHead(900L)
         jf.readDone(Array(902L, 903L))
         jf.close()
+
+        val jf2 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+        jf2.put(QueueItem(910L, Time.now, None, "hi".getBytes))
+        jf2.close()
 
         val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
         val reader = new j.Reader(file)
@@ -256,7 +300,8 @@ class JournalSpec extends Specification with TempFolder {
           jf.close()
 
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          val reader = j.reader("client1", 100L)
+          val reader = j.reader("client1")
+          reader.head = 100L
           reader.startReadBehind(100L)
           val item = reader.nextReadBehind()
           item.id mustEqual 101L
@@ -277,7 +322,8 @@ class JournalSpec extends Specification with TempFolder {
           jf2.close()
 
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          val reader = j.reader("client", 101L)
+          val reader = j.reader("client")
+          reader.head = 101L
           reader.startReadBehind(101L)
           reader.nextReadBehind().id mustEqual 102L
         }
@@ -301,7 +347,8 @@ class JournalSpec extends Specification with TempFolder {
           jf3.close()
 
           val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
-          val reader = j.reader("client", 102L)
+          val reader = j.reader("client")
+          reader.head = 102L
           reader.startReadBehind(102L)
           reader.nextReadBehind().id mustEqual 103L
 
