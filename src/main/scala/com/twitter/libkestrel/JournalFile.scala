@@ -94,6 +94,7 @@ object JournalFile {
     case class Put(item: QueueItem) extends Record
     case class ReadHead(id: Long) extends Record
     case class ReadDone(ids: Seq[Long]) extends Record
+    case class Unknown(command: Int) extends Record
   }
 }
 
@@ -240,7 +241,10 @@ extends Iterable[JournalFile.Record] {
         for (i <- 0 until ids.size) { ids(i) = b.getLong() }
         Record.ReadDone(ids)
       }
-      case _ => throw new CorruptedJournalException(lastPosition, file, "unknown command " + command)
+      case _ => {
+        // this is okay. we can skip the ones we don't know.
+        Record.Unknown(command)
+      }
     })
   }
 

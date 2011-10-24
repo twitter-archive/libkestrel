@@ -48,9 +48,9 @@ class JournalSpec extends Specification with TempFolder {
           ("test.1", 1),
           ("test.5005", 5005)
         ).foreach { case (name, id) =>
-          val j = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
-          j.put(QueueItem(id, Time.now, None, new Array[Byte](1)))
-          j.close()
+          val jf = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
+          jf.put(QueueItem(id, Time.now, None, new Array[Byte](1)))
+          jf.close()
         }
 
         val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
@@ -62,6 +62,47 @@ class JournalSpec extends Specification with TempFolder {
         j.fileForId(902) mustEqual Some(new File(folderName, "test.901"))
         j.fileForId(6666) mustEqual Some(new File(folderName, "test.5005"))
         j.fileForId(9999) mustEqual Some(new File(folderName, "test.8000"))
+      }
+    }
+
+    "checkpoint readers" in {
+      withTempFolder {
+        List("test.read.client1", "test.read.client2").foreach { name =>
+          val jf = JournalFile.createReader(new File(folderName, name), null, Duration.MaxValue)
+          jf.readHead(100L)
+          jf.readDone(Array(102L))
+          jf.close()
+        }
+
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        j.reader("client1", 0L).commit(101L)
+        j.reader("client2", 0L).commit(103L)
+        j.checkpoint()
+        j.close()
+
+        JournalFile.openReader(new File(folderName, "test.read.client1"), null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(102L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        )
+
+        JournalFile.openReader(new File(folderName, "test.read.client2"), null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(100L),
+          JournalFile.Record.ReadDone(Array(102L, 103L))
+        )
+      }
+    }
+
+    "make new reader" in {
+      withTempFolder {
+        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        j.reader("new", 100L).commit(101L)
+        j.reader("new", 100L).checkpoint()
+        j.close()
+
+        JournalFile.openReader(new File(folderName, "test.read.new"), null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(101L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        )
       }
     }
   }
@@ -126,6 +167,93 @@ class JournalSpec extends Specification with TempFolder {
         reader.head mustEqual 130L
         reader.doneSet.toList.sorted mustEqual List()
       }
+    }
+
+    "read-behind" in {
+      "start" in {
+        withTempFolder {
+          val jf = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+          jf.put(QueueItem(100L, Time.now, None, "100".getBytes))
+          jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val reader = j.reader("client1", 100L)
+          reader.startReadBehind(100L)
+          val item = reader.nextReadBehind()
+          item.id mustEqual 101L
+          new String(item.data) mustEqual "101"
+        }
+      }
+
+      "start at file edge" in {
+        withTempFolder {
+          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf1.close()
+
+          val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
+          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+          jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+          jf2.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val reader = j.reader("client", 101L)
+          reader.startReadBehind(101L)
+          reader.nextReadBehind().id mustEqual 102L
+        }
+      }
+
+      "across journal files" in {
+        withTempFolder {
+          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf1.close()
+
+          val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
+          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+          jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+          jf2.close()
+
+          val jf3 = JournalFile.createWriter(new File(folderName, "test.3"), null, Duration.MaxValue)
+          jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
+          jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
+          jf3.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val reader = j.reader("client", 102L)
+          reader.startReadBehind(102L)
+          reader.nextReadBehind().id mustEqual 103L
+
+          val item = reader.nextReadBehind()
+          item.id mustEqual 104L
+          new String(item.data) mustEqual "104"
+        }
+      }
+/*
+      "avoid confirmed items" in {
+        println("START-2")
+        withTempFolder {
+          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf1.close()
+
+          val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
+          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+          jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+          jf2.close()
+
+          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val reader = j.reader("client", 100L)
+          reader.commit(102L)
+          reader.startReadBehind(100L)
+          reader.nextReadBehind().id mustEqual 101L
+          reader.nextReadBehind().id mustEqual 103L
+        }
+      }*/
     }
   }
 }

@@ -3,16 +3,17 @@ package com.twitter.libkestrel
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, IOException}
+import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
 
 /*
  *
  * journal TODO:
- * - rotate to new file after X
- * - checkpoint reader
- * - read-behind pointer for reader
- * - clean up old files if they're dead
+ *   - rotate to new file after X
+ *   X checkpoint reader
+ *   X read-behind pointer for reader
+ *   - clean up old files if they're dead
  */
 
 
@@ -36,8 +37,8 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
 
   val prefix = new File(queuePath, queueName)
 
-  var idMap = immutable.TreeMap.empty[Long, File]
-  var readerMap = immutable.HashMap.empty[String, Reader]
+  @volatile var idMap = immutable.TreeMap.empty[Long, File]
+  @volatile var readerMap = immutable.HashMap.empty[String, Reader]
 
   buildIdMap()
   buildReaderMap()
@@ -46,7 +47,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
    * Scan timestamp files for this queue, and build a map of (item id -> file) for the first id
    * seen in each file. This lets us quickly find the right file when we look for an item id.
    */
-  def buildIdMap() {
+  private[this] def buildIdMap() {
     var newMap = immutable.TreeMap.empty[Long, File]
     writerFiles().foreach { file =>
       try {
@@ -61,9 +62,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         case e: IOException => log.warning("Skipping corrupted file: %s", file)
       }
     }
-    synchronized {
-      idMap = newMap
-    }
+    idMap = newMap
   }
 
   def writerFiles() = {
@@ -88,7 +87,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     idMap.to(id).lastOption.map { case (k, v) => v }
   }
 
-  def buildReaderMap() {
+  private[this] def buildReaderMap() {
     var newMap = immutable.HashMap.empty[String, Reader]
     readerFiles().foreach { file =>
       val name = file.getName.split("\\.")(2)
@@ -100,8 +99,21 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
         case e: IOException => log.warning("Skipping corrupted reader file: %s", file)
       }
     }
-    synchronized {
-      readerMap = newMap
+    readerMap = newMap
+  }
+
+  // need to pass in a "head" in case we need to make a new reader.
+  def reader(name: String, head: Long): Reader = {
+    readerMap.get(name).getOrElse {
+      // grab a lock so only one thread does this potentially slow thing at once
+      synchronized {
+        readerMap.get(name).getOrElse {
+          val reader = new Reader(new File(queuePath, queueName + ".read." + name))
+          reader.head = head
+          readerMap = readerMap + (name -> reader)
+          reader
+        }
+      }
     }
   }
 
@@ -113,15 +125,23 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     // FIXME
   }
 
+  def checkpoint() {
+    readerMap.foreach { case (name, reader) =>
+      reader.checkpoint()
+    }
+  }
+
   /**
    * Track state for a queue reader. Every item prior to the "head" pointer (including the "head"
    * pointer itself) has been read by this reader. Separately, "doneSet" is a set of items that
    * have been read out of order, usually because they refer to transactional reads that were
    * confirmed out of order.
    */
-  class Reader(file: File) {
+  case class Reader(file: File) {
     private[this] var _head = 0L
     private[this] val _doneSet = new ItemIdList()
+    private[this] var _readBehind: Option[JournalFile] = None
+    private[this] var _readBehindId = 0L
 
     def readState() {
       val journalFile = JournalFile.openReader(file, timer, syncJournal)
@@ -138,6 +158,9 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       }
     }
 
+    /**
+     * Rewrite the reader file with the current head and out-of-order committed reads.
+     */
     def checkpoint() {
       val newFile = new File(file.getParent, file.getName + "~~")
       val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
@@ -166,6 +189,55 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       } else {
         _doneSet.add(id)
       }
+    }
+
+    /**
+     * Open the journal file containing a given item, so we can read items directly out of the
+     * file. This means the queue no longer wants to try keeping every item in memory.
+     */
+    def startReadBehind(readBehindId: Long) {
+      val file = fileForId(readBehindId)
+      if (!file.isDefined) throw new IOException("Unknown id")
+      val jf = JournalFile.openWriter(file.get, timer, syncJournal)
+      var lastId = -1L
+      while (lastId != readBehindId) {
+        jf.readNext() match {
+          case None => throw new IOException("Can't find id " + head + " in " + file)
+          case Some(JournalFile.Record.Put(QueueItem(id, _, _, _))) => lastId = id
+          case _ =>
+        }
+      }
+      _readBehind = Some(jf)
+      _readBehindId = readBehindId
+    }
+
+    /**
+     * Read & return the next item in the read-behind journals.
+     */
+    @tailrec
+    final def nextReadBehind(): QueueItem = {
+      _readBehind.get.readNext() match {
+        case None => {
+          _readBehind.foreach { _.close() }
+          val file = fileForId(_readBehindId + 1)
+          if (!file.isDefined) throw new IOException("Unknown id")
+          _readBehind = Some(JournalFile.openWriter(file.get, timer, syncJournal))
+          nextReadBehind()
+        }
+        case Some(JournalFile.Record.Put(item)) => {
+          _readBehindId = item.id
+          item
+        }
+        case _ => nextReadBehind()
+      }
+    }
+
+    /**
+     * End read-behind mode, and close any open journal file.
+     */
+    def endReadBehind() {
+      _readBehind.foreach { _.close() }
+      _readBehind = None
     }
   }
 }
