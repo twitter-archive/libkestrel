@@ -142,6 +142,15 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     readerMap = newMap
   }
 
+  // find the earliest possible head id
+  private[this] def earliestHead = {
+    if (idMap.size == 0) {
+      0L
+    } else {
+      idMap.head match { case (id, file) => id }
+    }
+  }
+
   private[this] def openJournal() {
     if (idMap.size > 0) {
       val (id, file) = idMap.last
@@ -204,10 +213,22 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     file
   }
 
+  // delete any journal files that are unreferenced.
+  private[this] def checkOldFiles() {
+    val minHead = readerMap.values.foldLeft(tail) { (n, r) => n min (r.head + 1) }
+    // all the files that start off with unreferenced ids, minus the last. :)
+    idMap.takeWhile { case (id, file) => id <= minHead }.dropRight(1).foreach { case (id, file) =>
+      log.info("Erasing unused journal file for '%s': %s", queueName, file)
+      idMap = idMap - id
+      file.delete()
+    }
+  }
+
   private[this] def rotate() {
     var newFile = uniqueFile(new File(queuePath, queueName + "."))
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
     idMap = idMap + (_tailId + 1 -> newFile)
+    checkOldFiles()
   }
 
   // warning: set up your chaining before calling this. _tailId could increment during this method.
@@ -270,6 +291,9 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     readerMap.foreach { case (name, reader) =>
       reader.checkpoint()
     }
+    serialized {
+      checkOldFiles()
+    }
   }
 
   def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[(Long, Future[Unit])] = {
@@ -309,7 +333,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       } finally {
         journalFile.close()
       }
-      _head = _head min _tailId
+      _head = (_head min _tailId) max (earliestHead - 1)
     }
 
     /**
