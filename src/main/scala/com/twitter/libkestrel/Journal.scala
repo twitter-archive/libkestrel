@@ -214,7 +214,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
   }
 
-  def calculateArchiveSize() = {
+  def journalSize: Long = {
     writerFiles().foldLeft(0L) { (sum, file) => sum + file.length() }
   }
 

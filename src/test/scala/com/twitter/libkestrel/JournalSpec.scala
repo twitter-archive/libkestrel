@@ -75,8 +75,15 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
 
     "report size correctly" in {
       withTempFolder {
-        // FIXME
-        3 mustEqual 3
+        val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+        jf1.put(QueueItem(101L, Time.now, None, new Array[Byte](1000)))
+        jf1.close()
+        val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
+        jf2.put(QueueItem(102L, Time.now, None, new Array[Byte](1000)))
+        jf2.close()
+
+        val j = makeJournal("test")
+        j.journalSize mustEqual 2050L
       }
     }
 
@@ -261,7 +268,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         }
       }
     }
-    
+
     // FIXME
 /*
     "rotate journal files" in {
