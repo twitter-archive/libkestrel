@@ -17,6 +17,7 @@
 package com.twitter.libkestrel
 
 import com.twitter.conversions.storage._
+import com.twitter.conversions.time._
 import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
@@ -34,10 +35,14 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
           List(
-            "test.901", "test.8000", "test.3leet", "test.read.client1", "test.read.client2",
-            "test.readmenot", "test.1", "test.5005", "test.read.client1~~"
+            "test.read.client1", "test.read.client2", "test.read.client1~~", "test.readmenot"
           ).foreach { name =>
-            new File(folderName, name).createNewFile()
+            JournalFile.createReader(new File(folderName, name), null, Duration.MaxValue).close()
+          }
+          List(
+            "test.901", "test.8000", "test.3leet", "test.1", "test.5005"
+          ).foreach { name =>
+            JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue).close()
           }
 
           val j = makeJournal("test")
@@ -158,6 +163,38 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
     }
 
+    "create a default reader when no others exist" in {
+      withTempFolder {
+        val j = makeJournal("test")
+        j.close()
+
+        JournalFile.openReader(new File(folderName, "test.read."), null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(0L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        )
+      }
+    }
+
+    "convert the default reader to a named reader when one is created" in {
+      withTempFolder {
+        val j = makeJournal("test")
+        val reader = j.reader("")
+        reader.head = 100L
+        reader.checkpoint()
+
+        new File(folderName, "test.read.").exists mustEqual true
+
+        j.reader("hello")
+        new File(folderName, "test.read.").exists mustEqual false
+        new File(folderName, "test.read.hello").exists mustEqual true
+
+        JournalFile.openReader(new File(folderName, "test.read.hello"), null, Duration.MaxValue).toList mustEqual List(
+          JournalFile.Record.ReadHead(100L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        )
+      }
+    }
+
     /*
      * rationale:
      * this can happen if a write journal is corrupted/truncated, losing the last few items, and
@@ -269,25 +306,64 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
     }
 
-    // FIXME
-/*
     "rotate journal files" in {
       "when a journal file is over the size limit" in {
-        3 mustEqual 4
+        withTempFolder {
+          Time.withCurrentTimeFrozen { timeMutator =>
+            val j = makeJournal("test", 1.kilobyte)
+            val time1 = Time.now.inMilliseconds
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            val time2 = Time.now.inMilliseconds
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            val time3 = Time.now.inMilliseconds
+            j.put(new Array[Byte](512), Time.now, None)
+            j.close()
+
+            val file1 = new File(folderName, "test." + time1)
+            val file2 = new File(folderName, "test." + time2)
+            val defaultReader = new File(folderName, "test.read.")
+            new File(folderName).list.toList mustEqual List(file1, file2, defaultReader).map { _.getName() }
+            JournalFile.openWriter(file1, null, Duration.MaxValue).toList mustEqual List(
+              JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
+              JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
+            )
+            JournalFile.openWriter(file2, null, Duration.MaxValue).toList mustEqual List(
+              JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, new Array[Byte](512)))
+            )
+          }
+        }
       }
 
       "with a read-behind reader chasing" in {
-        3 mustEqual 4
+        withTempFolder {
+          Time.withCurrentTimeFrozen { timeMutator =>
+            val j = makeJournal("test", 1.kilobyte)
+            val reader = j.reader("1")
+            // FIXME
+            3 mustEqual 4
+          }
+        }
       }
 
       "cleaning up any dead files behind it" in {
         3 mustEqual 4
       }
     }
-    */
   }
 
   "Journal#Reader" should {
+    "be created with a checkpoint file" in {
+      withTempFolder {
+        val j = makeJournal("test")
+        j.reader("hello")
+
+        new File(folderName, "test.read.hello").exists mustEqual true
+        j.close()
+      }
+    }
+
     "write a checkpoint" in {
       withTempFolder {
         val file = new File(folderName, "a1")
@@ -358,6 +434,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         val j = makeJournal("test")
         val (id1, future1) = j.put("hi".getBytes, Time.now, None)()
         val reader = j.reader("1")
+        reader.commit(id1)
         val (id2, future2) = j.put("bye".getBytes, Time.now, None)()
 
         reader.head mustEqual id1

@@ -66,6 +66,17 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
   openJournal()
   buildReaderMap()
 
+  // make sure there's always at least a default reader.
+  if (readerMap.isEmpty) reader("")
+
+  // and there's no default reader if there's at least one other one.
+  if (readerMap.size > 1) {
+    readerMap.get("").foreach { r =>
+      r.file.delete()
+      readerMap = readerMap - ""
+    }
+  }
+
   /**
    * Scan timestamp files for this queue, and build a map of (item id -> file) for the first id
    * seen in each file. This lets us quickly find the right file when we look for an item id.
@@ -205,8 +216,24 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       // grab a lock so only one thread does this potentially slow thing at once
       synchronized {
         readerMap.get(name).getOrElse {
-          val reader = new Reader(new File(queuePath, queueName + ".read." + name))
-          reader.head = _tailId
+          val file = new File(queuePath, queueName + ".read." + name)
+          val reader = readerMap.get("") match {
+            case Some(r) => {
+              // move the default reader over to our new one.
+              val oldFile = r.file
+              r.file = file
+              r.checkpoint()
+              oldFile.delete()
+              readerMap = readerMap - ""
+              r
+            }
+            case None => {
+              val reader = new Reader(file)
+              reader.head = _tailId
+              reader.checkpoint()
+              reader
+            }
+          }
           readerMap = readerMap + (name -> reader)
           reader
         }
@@ -217,6 +244,8 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
   def journalSize: Long = {
     writerFiles().foldLeft(0L) { (sum, file) => sum + file.length() }
   }
+
+  def tail = _tailId
 
   def close() {
     readerMap.values.foreach { reader =>
@@ -259,7 +288,9 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
    * have been read out of order, usually because they refer to transactional reads that were
    * confirmed out of order.
    */
-  case class Reader(file: File) {
+  case class Reader(_file: File) extends Serialized {
+    @volatile var file: File = _file
+
     private[this] var _head = 0L
     private[this] val _doneSet = new ItemIdList()
     private[this] var _readBehind: Option[JournalFile] = None
@@ -285,13 +316,17 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
     def checkpoint() {
-      // FIXME there is no reason this should happen inline. copy head & doneseq and do it in another thread.
-      val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
-      val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
-      newJournalFile.readHead(_head)
-      newJournalFile.readDone(_doneSet.toSeq)
-      newJournalFile.close()
-      newFile.renameTo(file)
+      val head = _head
+      val doneSet = _doneSet.toSeq
+      // FIXME really this should go in another thread. doesn't need to happen inline.
+      serialized {
+        val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
+        val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
+        newJournalFile.readHead(_head)
+        newJournalFile.readDone(_doneSet.toSeq)
+        newJournalFile.close()
+        newFile.renameTo(file)
+      }
     }
 
     def head: Long = this._head
