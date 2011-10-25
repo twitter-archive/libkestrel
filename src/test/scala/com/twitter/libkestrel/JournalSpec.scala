@@ -16,6 +16,7 @@
 
 package com.twitter.libkestrel
 
+import com.twitter.conversions.storage._
 import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
@@ -23,6 +24,11 @@ import java.nio.ByteBuffer
 import org.specs.Specification
 
 class JournalSpec extends Specification with TempFolder with TestLogging {
+  def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
+    new Journal(new File(folderName), name, maxFileSize, null, Duration.MaxValue)
+
+  def makeJournal(name: String): Journal = makeJournal(name, 16.megabytes)
+
   "Journal" should {
     "find reader/writer files" in {
       withTempFolder {
@@ -34,7 +40,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
             new File(folderName, name).createNewFile()
           }
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           j.writerFiles().map { _.getName }.toSet mustEqual
             Set("test.901", "test.8000", "test.1", "test.5005", "test." + Time.now.inMilliseconds)
           j.readerFiles().map { _.getName }.toSet mustEqual
@@ -49,7 +55,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           new File(folderName, name).createNewFile()
         }
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         new File(folderName, "test.read.1~~").exists() mustEqual false
       }
     }
@@ -60,10 +66,17 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           new File(folderName, name).createNewFile()
         }
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         j.erase()
 
         new File(folderName).list.toList mustEqual List("testbad")
+      }
+    }
+
+    "report size correctly" in {
+      withTempFolder {
+        // FIXME
+        3 mustEqual 3
       }
     }
 
@@ -80,7 +93,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf.close()
         }
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         j.fileForId(1) mustEqual Some(new File(folderName, "test.1"))
         j.fileForId(0) mustEqual None
         j.fileForId(555) mustEqual Some(new File(folderName, "test.1"))
@@ -104,7 +117,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         jf.put(QueueItem(105L, Time.now, None, "hi".getBytes))
         jf.close()
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         j.reader("client1").commit(101L)
         j.reader("client2").commit(103L)
         j.checkpoint()
@@ -124,7 +137,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
 
     "make new reader" in {
       withTempFolder {
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         var r = j.reader("new")
         r.head = 100L
         r.commit(101L)
@@ -160,7 +173,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         jf3.readDone(Array(395L, 403L))
         jf3.close()
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         val r1 = j.reader("1")
         r1.head mustEqual 400L
         r1.doneSet mustEqual Set()
@@ -174,7 +187,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
           val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val (id, future) = j.put("hi".getBytes, Time.now, None)()
           id mustEqual 1L
           j.close()
@@ -201,7 +214,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
           jf2.close()
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val (id, future) = j.put("hi".getBytes, Time.now, None)()
           id mustEqual 103L
           j.close()
@@ -233,7 +246,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           raf.setLength(file.length - 1)
           raf.close()
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val (id, future) = j.put("hi".getBytes, Time.now, None)()
           id mustEqual 102L
           j.close()
@@ -248,13 +261,30 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         }
       }
     }
+    
+    // FIXME
+/*
+    "rotate journal files" in {
+      "when a journal file is over the size limit" in {
+        3 mustEqual 4
+      }
+
+      "with a read-behind reader chasing" in {
+        3 mustEqual 4
+      }
+
+      "cleaning up any dead files behind it" in {
+        3 mustEqual 4
+      }
+    }
+    */
   }
 
   "Journal#Reader" should {
     "write a checkpoint" in {
       withTempFolder {
         val file = new File(folderName, "a1")
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         val reader = new j.Reader(file)
         reader.head = 123L
         reader.commit(125L)
@@ -280,7 +310,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         jf2.put(QueueItem(910L, Time.now, None, "hi".getBytes))
         jf2.close()
 
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         val reader = new j.Reader(file)
         reader.readState()
         reader.head mustEqual 900L
@@ -291,7 +321,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     "track committed items" in {
       withTempFolder {
         val file = new File(folderName, "a1")
-        val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+        val j = makeJournal("test")
         val reader = new j.Reader(file)
         reader.head = 123L
 
@@ -316,6 +346,19 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
     }
 
+    "flush all items" in {
+      withTempFolder {
+        val j = makeJournal("test")
+        val (id1, future1) = j.put("hi".getBytes, Time.now, None)()
+        val reader = j.reader("1")
+        val (id2, future2) = j.put("bye".getBytes, Time.now, None)()
+
+        reader.head mustEqual id1
+        reader.flush()
+        reader.head mustEqual id2
+      }
+    }
+
     "read-behind" in {
       "start" in {
         withTempFolder {
@@ -324,7 +367,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
           jf.close()
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val reader = j.reader("client1")
           reader.head = 100L
           reader.inReadBehind mustEqual false
@@ -351,7 +394,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
           jf2.close()
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val reader = j.reader("client")
           reader.head = 101L
           reader.startReadBehind(101L)
@@ -376,7 +419,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
           jf3.close()
 
-          val j = new Journal(new File(folderName), "test", null, Duration.MaxValue)
+          val j = makeJournal("test")
           val reader = j.reader("client")
           reader.head = 102L
           reader.startReadBehind(102L)

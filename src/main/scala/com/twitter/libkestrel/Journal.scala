@@ -28,14 +28,27 @@ object Journal {
       name.split('.')(0)
     }.toSet
   }
+
+  def builder(queuePath: File, timer: Timer, syncJournal: Duration) = {
+    (queueName: String, maxFileSize: StorageUnit) => {
+      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal)
+    }
+  }
+
+  def builder(queuePath: File, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration) = {
+    (queueName: String) => {
+      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal)
+    }
+  }
 }
 
 /**
  * Maintain a set of journal files with the same prefix (`queuePath`/`queueName`):
- * - list of adds (<prefix>.<timestamp>)
- * - one state file for each reader (<prefix>.read.<name>)
+ *   - list of adds (<prefix>.<timestamp>)
+ *   - one state file for each reader (<prefix>.read.<name>)
+ * The files filled with adds will be chunked as they reach `maxFileSize` in length.
  */
-class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Duration)
+class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration)
   extends Serialized
 {
   private[this] val log = Logger.get(getClass)
@@ -43,7 +56,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   val prefix = new File(queuePath, queueName)
 
   @volatile var idMap = immutable.TreeMap.empty[Long, File]
-  @volatile var readerMap = immutable.HashMap.empty[String, Reader]
+  @volatile var readerMap = immutable.Map.empty[String, Reader]
 
   @volatile private[this] var _journalFile: JournalFile = null
   @volatile private[this] var _tailId = 0L
@@ -171,12 +184,17 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     }
   }
 
-  private[this] def rotate() {
-    var newFile = new File(queuePath, queueName + "." + Time.now.inMilliseconds)
-    while (!newFile.createNewFile()) {
+  private[this] def uniqueFile(prefix: File): File = {
+    var file = new File(prefix.getAbsolutePath + Time.now.inMilliseconds)
+    while (!file.createNewFile()) {
       Thread.sleep(1)
-      newFile = new File(queuePath, queueName + "." + Time.now.inMilliseconds)
+      file = new File(prefix.getAbsolutePath + Time.now.inMilliseconds)
     }
+    file
+  }
+
+  private[this] def rotate() {
+    var newFile = uniqueFile(new File(queuePath, queueName + "."))
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
     idMap = idMap + (_tailId + 1 -> newFile)
   }
@@ -201,7 +219,12 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
   }
 
   def close() {
-    // FIXME
+    readerMap.values.foreach { reader =>
+      reader.checkpoint()
+      reader.close()
+    }
+    readerMap = immutable.Map.empty[String, Reader]
+    _journalFile.close()
   }
 
   /**
@@ -225,6 +248,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       _tailId += 1
       val id = _tailId
       val future = _journalFile.put(QueueItem(_tailId, addTime, expireTime, data))
+      if (_journalFile.position >= maxFileSize.inBytes) rotate()
       (id, future)
     }
   }
@@ -261,7 +285,8 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
     def checkpoint() {
-      val newFile = new File(file.getParent, file.getName + "~~")
+      // FIXME there is no reason this should happen inline. copy head & doneseq and do it in another thread.
+      val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
       val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
       newJournalFile.readHead(_head)
       newJournalFile.readDone(_doneSet.toSeq)
@@ -273,7 +298,7 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     def doneSet: Set[Long] = _doneSet.toSeq.toSet
 
     def head_=(id: Long) {
-      this._head = id
+      _head = id
       val toRemove = _doneSet.toSeq.filter { _ <= _head }
       _doneSet.remove(toRemove.toSet)
     }
@@ -288,6 +313,14 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
       } else {
         _doneSet.add(id)
       }
+    }
+
+    /**
+     * Discard all items and catch up with the main queue.
+     */
+    def flush() {
+      _head = _tailId
+      _doneSet.popAll()
     }
 
     /**
@@ -337,6 +370,10 @@ class Journal(queuePath: File, queueName: String, timer: Timer, syncJournal: Dur
     def endReadBehind() {
       _readBehind.foreach { _.close() }
       _readBehind = None
+    }
+
+    def close() {
+      endReadBehind()
     }
 
     def inReadBehind = _readBehind.isDefined

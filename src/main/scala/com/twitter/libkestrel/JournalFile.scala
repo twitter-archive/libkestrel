@@ -273,5 +273,5 @@ class JournalFile(file: File, timer: Timer, syncJournal: Duration)
     next().iterator
   }
 
-  def position = reader.position
+  def position = if (reader ne null) reader.position else writer.position
 }
