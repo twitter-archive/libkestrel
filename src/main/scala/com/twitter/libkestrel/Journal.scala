@@ -9,17 +9,6 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
 
-/*
- *
- * journal TODO:
- *   - rotate to new file after X
- *   X checkpoint reader
- *   X read-behind pointer for reader
- *   - clean up old files if they're dead
- *   X fix readers with a too-far-future head
- */
-
-
 object Journal {
   def getQueueNamesFromFolder(path: File): Set[String] = {
     path.list().filter { name =>
@@ -438,30 +427,3 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     def inReadBehind = _readBehind.isDefined
   }
 }
-
-
-/*
-
-
-  def rotate(reservedItems: Seq[QItem], setCheckpoint: Boolean): Option[Checkpoint] = {
-    writer.close()
-    val rotatedFile = uniqueFile(".")
-    new File(queuePath, queueName).renameTo(rotatedFile)
-    size = 0
-    calculateArchiveSize()
-    open()
-
-    if (readerFilename == Some(queueName)) {
-      readerFilename = Some(rotatedFile.getName)
-    }
-
-    if (setCheckpoint && !checkpoint.isDefined) {
-      checkpoint = Some(Checkpoint(rotatedFile.getName, reservedItems))
-    }
-    checkpoint
-  }
-
-
-
- */
-

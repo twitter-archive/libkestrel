@@ -30,6 +30,12 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
 
   def makeJournal(name: String): Journal = makeJournal(name, 16.megabytes)
 
+  def addItem(j: Journal, size: Int) = {
+    val now = Time.now.inMilliseconds
+    j.put(new Array[Byte](size), Time.now, None)
+    now
+  }
+
   "Journal" should {
     "find reader/writer files" in {
       withTempFolder {
@@ -326,95 +332,87 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     }
 
     "rotate journal files" in {
-      def addItem(j: Journal, size: Int) = {
-        val now = Time.now.inMilliseconds
-        j.put(new Array[Byte](size), Time.now, None)
-        now
-      }
+      withTempFolder {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val j = makeJournal("test", 1.kilobyte)
 
-      "when a journal file is over the size limit" in {
+          val time1 = addItem(j, 512)
+          timeMutator.advance(1.millisecond)
+          val time2 = addItem(j, 512)
+          timeMutator.advance(1.millisecond)
+          val time3 = addItem(j, 512)
+          j.close()
+
+          val file1 = new File(folderName, "test." + time1)
+          val file2 = new File(folderName, "test." + time2)
+          val defaultReader = new File(folderName, "test.read.")
+          new File(folderName).list.toList mustEqual List(file1, file2, defaultReader).map { _.getName() }
+          JournalFile.openWriter(file1, null, Duration.MaxValue).toList mustEqual List(
+            JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
+            JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
+          )
+          JournalFile.openWriter(file2, null, Duration.MaxValue).toList mustEqual List(
+            JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, new Array[Byte](512)))
+          )
+        }
+      }
+    }
+
+    "clean up any dead files behind it" in {
+      "when a client catches up" in {
         withTempFolder {
           Time.withCurrentTimeFrozen { timeMutator =>
             val j = makeJournal("test", 1.kilobyte)
+            val reader = j.reader("client")
 
             val time1 = addItem(j, 512)
             timeMutator.advance(1.millisecond)
             val time2 = addItem(j, 512)
             timeMutator.advance(1.millisecond)
             val time3 = addItem(j, 512)
-            j.close()
+            timeMutator.advance(1.millisecond)
 
-            val file1 = new File(folderName, "test." + time1)
-            val file2 = new File(folderName, "test." + time2)
-            val defaultReader = new File(folderName, "test.read.")
-            new File(folderName).list.toList mustEqual List(file1, file2, defaultReader).map { _.getName() }
-            JournalFile.openWriter(file1, null, Duration.MaxValue).toList mustEqual List(
-              JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
-              JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
-            )
-            JournalFile.openWriter(file2, null, Duration.MaxValue).toList mustEqual List(
-              JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, new Array[Byte](512)))
-            )
+            new File(folderName, "test." + time1).exists mustEqual true
+            new File(folderName, "test." + time2).exists mustEqual true
+
+            reader.commit(1L)
+            reader.commit(2L)
+            j.checkpoint()
+
+            new File(folderName, "test." + time1).exists mustEqual false
+            new File(folderName, "test." + time2).exists mustEqual true
+
+            j.close()
           }
         }
       }
 
-      "cleaning up any dead files behind it" in {
-        "when a client catches up" in {
-          withTempFolder {
-            Time.withCurrentTimeFrozen { timeMutator =>
-              val j = makeJournal("test", 1.kilobyte)
-              val reader = j.reader("client")
+      "when the journal moves to a new file" in {
+        withTempFolder {
+          Time.withCurrentTimeFrozen { timeMutator =>
+            val j = makeJournal("test", 1.kilobyte)
+            val reader = j.reader("client")
+            val time0 = Time.now.inMilliseconds
+            timeMutator.advance(1.millisecond)
 
-              val time1 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
-              val time2 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
-              val time3 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
+            val time1 = addItem(j, 512)
+            timeMutator.advance(1.millisecond)
+            val time2 = addItem(j, 512)
+            timeMutator.advance(1.millisecond)
+            reader.commit(1L)
+            reader.commit(2L)
+            reader.checkpoint()
 
-              new File(folderName, "test." + time1).exists mustEqual true
-              new File(folderName, "test." + time2).exists mustEqual true
+            new File(folderName, "test." + time0).exists mustEqual true
+            new File(folderName, "test." + time2).exists mustEqual true
 
-              reader.commit(1L)
-              reader.commit(2L)
-              j.checkpoint()
+            val time3 = addItem(j, 512)
+            timeMutator.advance(1.millisecond)
+            val time4 = addItem(j, 512)
 
-              new File(folderName, "test." + time1).exists mustEqual false
-              new File(folderName, "test." + time2).exists mustEqual true
-
-              j.close()
-            }
-          }
-        }
-
-        "when the journal moves to a new file" in {
-          withTempFolder {
-            Time.withCurrentTimeFrozen { timeMutator =>
-              val j = makeJournal("test", 1.kilobyte)
-              val reader = j.reader("client")
-              val time0 = Time.now.inMilliseconds
-              timeMutator.advance(1.millisecond)
-
-              val time1 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
-              val time2 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
-              reader.commit(1L)
-              reader.commit(2L)
-              reader.checkpoint()
-
-              new File(folderName, "test." + time0).exists mustEqual true
-              new File(folderName, "test." + time2).exists mustEqual true
-
-              val time3 = addItem(j, 512)
-              timeMutator.advance(1.millisecond)
-              val time4 = addItem(j, 512)
-
-              new File(folderName, "test." + time0).exists mustEqual false
-              new File(folderName, "test." + time2).exists mustEqual true
-              new File(folderName, "test." + time4).exists mustEqual true
-            }
+            new File(folderName, "test." + time0).exists mustEqual false
+            new File(folderName, "test." + time2).exists mustEqual true
+            new File(folderName, "test." + time4).exists mustEqual true
           }
         }
       }
