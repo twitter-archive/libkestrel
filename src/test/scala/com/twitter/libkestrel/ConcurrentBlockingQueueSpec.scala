@@ -39,6 +39,21 @@ object ConcurrentBlockingQueueSpec extends Specification {
       queue.poll() mustEqual None
     }
 
+    "conditionally poll items" in {
+      val queue = newQueue()
+      queue.size mustEqual 0
+      queue.poll() mustEqual None
+      queue.put("first") mustEqual true
+      queue.put("second") mustEqual true
+      queue.put("third") mustEqual true
+      queue.size mustEqual 3
+      queue.pollIf(_ contains "t") mustEqual Some("first")
+      queue.pollIf(_ contains "t") mustEqual None
+      queue.pollIf(_ contains "c") mustEqual Some("second")
+      queue.pollIf(_ contains "t") mustEqual Some("third")
+      queue.pollIf(_ contains "t") mustEqual None
+    }
+
     "honor the max size" in {
       "by refusing new puts" in {
         val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)

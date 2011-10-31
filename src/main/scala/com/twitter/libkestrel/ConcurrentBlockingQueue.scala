@@ -65,7 +65,9 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
    */
-  private[this] val pollers = new ConcurrentLinkedQueue[Promise[Option[A]]]
+  case class Poller(promise: Promise[Option[A]], predicate: A => Boolean)
+  private[this] val truth: A => Boolean = { _ => true }
+  private[this] val pollers = new ConcurrentLinkedQueue[Poller]
 
   /**
    * An estimate of the queue size, tracked for each put/get.
@@ -111,12 +113,17 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue if one is immediately available.
    */
-  def poll(): Option[A] = {
+  def poll(): Option[A] = pollIf(truth)
+
+  /**
+   * Get the next item from the queue if it satisfies a predicate.
+   */
+  def pollIf(predicate: A => Boolean): Option[A] = {
     if (queue.isEmpty) {
       None
     } else {
       val promise = new Promise[Option[A]]
-      pollers.add(promise)
+      pollers.add(Poller(promise, predicate))
       handoff()
       promise()
     }
@@ -152,6 +159,8 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     if (fullPolicy == FullPolicy.DropOldest) {
       // make sure we aren't over the max queue size.
       while (elementCount.get > maxItems) {
+        // FIXME: increment counter about discarded?
+        // offer discarded item
         queue.poll()
         elementCount.decrementAndGet()
       }
@@ -160,9 +169,14 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     // FIXME: alternate which is checked first.
     var poller = pollers.poll()
     if (poller ne null) {
-      val item = queue.poll()
-      if (item ne null) elementCount.decrementAndGet()
-      poller.setValue(Option(item))
+      val item = queue.peek()
+      if ((item ne null) && poller.predicate(item)) {
+        poller.promise.setValue(Some(item))
+        queue.poll()
+        elementCount.decrementAndGet()
+      } else {
+        poller.promise.setValue(None)
+      }
     } else {
       val item = queue.peek()
       if (item ne null) {

@@ -72,6 +72,12 @@ final class SimpleBlockingQueue[A <: AnyRef](
     }
   }
 
+  def pollIf(predicate: A => Boolean): Option[A] = {
+    synchronized {
+      if (queue.isEmpty || !predicate(queue.head)) None else Some(queue.dequeue())
+    }
+  }
+
   def toDebug: String = {
     synchronized {
       "<SimpleBlockingQueue size=%d waiters=%d>".format(queue.size, waiters.size)
