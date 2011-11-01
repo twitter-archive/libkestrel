@@ -549,7 +549,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           val reader = j.reader("client")
           reader.head = 101L
           reader.startReadBehind(101L)
-          reader.nextReadBehind().id mustEqual 102L
+          reader.nextReadBehind().map { _.id } mustEqual Some(102L)
         }
       }
 
@@ -574,12 +574,59 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           val reader = j.reader("client")
           reader.head = 102L
           reader.startReadBehind(102L)
-          reader.nextReadBehind().id mustEqual 103L
+          reader.nextReadBehind().map { _.id } mustEqual Some(103L)
 
           val item = reader.nextReadBehind()
-          item.id mustEqual 104L
-          new String(item.data) mustEqual "104"
+          item.map { _.id } mustEqual Some(104L)
+          new String(item.get.data) mustEqual "104"
         }
+      }
+
+      "until it catches up" in {
+        withTempFolder {
+          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+          jf1.close()
+
+          val j = makeJournal("test")
+          val reader = j.reader("client")
+          reader.head = 100L
+          reader.startReadBehind(100L)
+
+          reader.inReadBehind mustEqual true
+          reader.nextReadBehind().map { _.id } mustEqual Some(101L)
+          reader.inReadBehind mustEqual true
+          reader.nextReadBehind().map { _.id } mustEqual None
+          reader.inReadBehind mustEqual false
+        }
+      }
+    }
+
+    "count items & bytes" in {
+      withTempFolder {
+        val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+        (101 to 150).foreach { i =>
+          jf1.put(QueueItem(i.toLong, Time.now, None, i.toString.getBytes))
+        }
+        jf1.close()
+
+        val jf2 = JournalFile.createReader(new File(folderName, "test.read.1"), null, Duration.MaxValue)
+        jf2.readHead(110L)
+        jf2.readDone(Array[Long]())
+        jf2.close()
+
+        val j = makeJournal("test")
+        val reader = j.reader("1")
+        reader.countItemsAndBytes() mustEqual (40, 40 * 3)
+
+        reader.commit(112L)
+        reader.countItemsAndBytes() mustEqual (39, 39 * 3)
+
+        reader.commit(111L)
+        reader.countItemsAndBytes() mustEqual (38, 38 * 3)
+
+        reader.inReadBehind mustEqual false
       }
     }
   }

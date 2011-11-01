@@ -348,6 +348,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
 
     def head: Long = this._head
     def doneSet: Set[Long] = _doneSet.toSeq.toSet
+    def tail: Long = Journal.this._tailId
 
     def head_=(id: Long) {
       _head = id
@@ -398,20 +399,26 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
 
     /**
      * Read & return the next item in the read-behind journals.
+     * If we've caught up, turn off read-behind and return None.
      */
     @tailrec
-    final def nextReadBehind(): QueueItem = {
+    final def nextReadBehind(): Option[QueueItem] = {
+      if (_readBehindId == tail) {
+        endReadBehind()
+        return None
+      }
       _readBehind.get.readNext() match {
         case None => {
           _readBehind.foreach { _.close() }
           val file = fileForId(_readBehindId + 1)
           if (!file.isDefined) throw new IOException("Unknown id")
+          log.debug("Read-behind for %s+%s moving to: %s", queueName, name, file)
           _readBehind = Some(JournalFile.openWriter(file.get, timer, syncJournal))
           nextReadBehind()
         }
         case Some(JournalFile.Record.Put(item)) => {
           _readBehindId = item.id
-          item
+          Some(item)
         }
         case _ => nextReadBehind()
       }
@@ -431,5 +438,25 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
 
     def inReadBehind = _readBehind.isDefined
+
+    /*
+     * Scan through the journals from head to tail and count how many items there are, and how
+     * many total bytes are used by them.
+     */
+    def countItemsAndBytes(): (Int, Long) = {
+      log.debug("Counting items/bytes for %s+%s", queueName, name)
+      var items = 0
+      var bytes = 0L
+      startReadBehind(head)
+      var item = nextReadBehind()
+      while (item.isDefined) {
+        if (!(doneSet contains item.get.id)) {
+          items += 1
+          bytes += item.get.data.size
+        }
+        item = nextReadBehind()
+      }
+      (items, bytes)
+    }
   }
 }
