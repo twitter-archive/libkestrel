@@ -44,11 +44,11 @@ final class SimpleBlockingQueue[A <: AnyRef](
 
   def size: Int = queue.size
 
-  def get(): Future[A] = get(500.days)
+  def get(): Future[A] = get(500.days.fromNow)
 
-  def get(timeout: Duration): Future[A] = {
+  def get(deadline: Time): Future[A] = {
     val promise = new Promise[A]
-    waitFor(promise, timeout.fromNow)
+    waitFor(promise, deadline)
     promise
   }
 

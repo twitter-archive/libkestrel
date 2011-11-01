@@ -96,15 +96,15 @@ object ConcurrentBlockingQueueSpec extends Specification {
 
     "timeout" in {
       val queue = newQueue()
-      val future = queue.get(10.milliseconds)
+      val future = queue.get(10.milliseconds.fromNow)
       future.isDefined must eventually(be_==(true))
       future() must throwA[TimeoutException]
     }
 
     "fulfill gets before they timeout" in {
       val queue = newQueue()
-      val future1 = queue.get(10.milliseconds)
-      val future2 = queue.get(10.milliseconds)
+      val future1 = queue.get(10.milliseconds.fromNow)
+      val future2 = queue.get(10.milliseconds.fromNow)
       queue.put("surprise!")
       future1.isDefined must eventually(be_==(true))
       future2.isDefined must eventually(be_==(true))
@@ -116,7 +116,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
       var ex = 0
       (0 until 100).foreach { i =>
         val queue = newQueue()
-        val future = queue.get(10.milliseconds)
+        val future = queue.get(10.milliseconds.fromNow)
         Thread.sleep(10)
         // the future will throw an exception if it's set twice.
         queue.put("ahoy!")

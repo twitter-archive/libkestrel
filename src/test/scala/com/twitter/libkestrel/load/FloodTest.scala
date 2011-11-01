@@ -123,7 +123,7 @@ object FloodTest {
               queue.poll()
             } else {
               try {
-                Some(queue.get(1.millisecond)())
+                Some(queue.get(1.millisecond.fromNow)())
               } catch {
                 case e: TimeoutException => None
               }

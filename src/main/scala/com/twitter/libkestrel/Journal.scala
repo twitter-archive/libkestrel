@@ -428,7 +428,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * End read-behind mode, and close any open journal file.
      */
     def endReadBehind() {
-      log.debug("Leaving read-behind for %s+%s", queueName, name)
+      log.info("Leaving read-behind for %s+%s", queueName, name)
       _readBehind.foreach { _.close() }
       _readBehind = None
     }

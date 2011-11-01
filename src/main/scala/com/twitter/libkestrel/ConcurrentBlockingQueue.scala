@@ -108,7 +108,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue if it arrives before a timeout.
    */
-  def get(timeout: Duration): Future[A] = get(Some(timeout))
+  def get(deadline: Time): Future[A] = get(Some(deadline))
 
   /**
    * Get the next item from the queue if one is immediately available.
@@ -129,13 +129,13 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
-  private def get(timeout: Option[Duration]): Future[A] = {
+  private def get(deadline: Option[Time]): Future[A] = {
     val promise = new Promise[A]
     waiterSet.put(promise, promise)
-    val timerTask = timeout.map { t =>
-      timer.schedule(t.fromNow) {
+    val timerTask = deadline.map { d =>
+      timer.schedule(d) {
         if (waiterSet.remove(promise) ne null) {
-          promise.setException(new TimeoutException(t.toString))
+          promise.setException(new TimeoutException(d.toString))
         }
       }
     }
