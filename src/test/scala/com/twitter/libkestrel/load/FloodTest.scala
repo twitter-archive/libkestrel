@@ -17,6 +17,7 @@ object FloodTest {
   var maxItems = 10000
   var validate = false
   var oldQueue = false
+  var sleep = 0
 
   implicit val javaTimer: Timer = new JavaTimer()
 
@@ -39,6 +40,8 @@ object FloodTest {
     Console.println("        validate items afterwards (makes it much slower)")
     Console.println("    -Q")
     Console.println("        use old simple queue instead, for comparison")
+    Console.println("    -S SECONDS")
+    Console.println("        sleep before starting, for attaching a profiler")
   }
 
   def parseArgs(args: List[String]) {
@@ -68,6 +71,9 @@ object FloodTest {
       case "-Q" :: xs =>
         oldQueue = true
         parseArgs(xs)
+      case "-S" :: x :: xs =>
+        sleep = x.toInt
+        parseArgs(xs)
       case _ =>
         usage()
         System.exit(1)
@@ -80,6 +86,12 @@ object FloodTest {
     println("flood: writers=%d, readers=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, oldq=%s".format(
       writerThreadCount, readerThreadCount, testTime, pollPercent, maxItems, validate, oldQueue
     ))
+
+    if (sleep > 0) {
+      println("Sleeping %d seconds...".format(sleep))
+      Thread.sleep(sleep * 1000)
+      println("Okay.")
+    }
 
     val queue = if (oldQueue) {
       SimpleBlockingQueue[String]
