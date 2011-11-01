@@ -257,8 +257,8 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         Time.withCurrentTimeFrozen { timeMutator =>
           val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
           val j = makeJournal("test")
-          val (id, future) = j.put("hi".getBytes, Time.now, None)()
-          id mustEqual 1L
+          val (item, future) = j.put("hi".getBytes, Time.now, None)()
+          item.id mustEqual 1L
           j.close()
 
           val file = new File(folderName, "test." + Time.now.inMilliseconds)
@@ -284,8 +284,8 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf2.close()
 
           val j = makeJournal("test")
-          val (id, future) = j.put("hi".getBytes, Time.now, None)()
-          id mustEqual 103L
+          val (item, future) = j.put("hi".getBytes, Time.now, None)()
+          item.id mustEqual 103L
           j.close()
 
           val jf3 = JournalFile.openWriter(file2, null, Duration.MaxValue)
@@ -316,8 +316,8 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           raf.close()
 
           val j = makeJournal("test")
-          val (id, future) = j.put("hi".getBytes, Time.now, None)()
-          id mustEqual 102L
+          val (item, future) = j.put("hi".getBytes, Time.now, None)()
+          item.id mustEqual 102L
           j.close()
 
           val jf2 = JournalFile.openWriter(file, null, Duration.MaxValue)
@@ -499,14 +499,14 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     "flush all items" in {
       withTempFolder {
         val j = makeJournal("test")
-        val (id1, future1) = j.put("hi".getBytes, Time.now, None)()
+        val (item1, future1) = j.put("hi".getBytes, Time.now, None)()
         val reader = j.reader("1")
-        reader.commit(id1)
-        val (id2, future2) = j.put("bye".getBytes, Time.now, None)()
+        reader.commit(item1.id)
+        val (item2, future2) = j.put("bye".getBytes, Time.now, None)()
 
-        reader.head mustEqual id1
+        reader.head mustEqual item1.id
         reader.flush()
-        reader.head mustEqual id2
+        reader.head mustEqual item2.id
       }
     }
 
@@ -525,8 +525,8 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           reader.startReadBehind(100L)
           reader.inReadBehind mustEqual true
           val item = reader.nextReadBehind()
-          item.id mustEqual 101L
-          new String(item.data) mustEqual "101"
+          item.map { _.id } mustEqual Some(101L)
+          new String(item.get.data) mustEqual "101"
 
           reader.endReadBehind()
           reader.inReadBehind mustEqual false

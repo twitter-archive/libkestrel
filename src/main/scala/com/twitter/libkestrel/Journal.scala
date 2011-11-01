@@ -286,13 +286,14 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
   }
 
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[(Long, Future[Unit])] = {
+  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[(QueueItem, Future[Unit])] = {
     serialized {
       _tailId += 1
       val id = _tailId
-      val future = _journalFile.put(QueueItem(_tailId, addTime, expireTime, data))
+      val item = QueueItem(_tailId, addTime, expireTime, data)
+      val future = _journalFile.put(item)
       if (_journalFile.position >= maxFileSize.inBytes) rotate()
-      (id, future)
+      (item, future)
     }
   }
 
