@@ -121,7 +121,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     readerFiles().foreach { file =>
       val name = file.getName.split("\\.")(2)
       try {
-        val reader = new Reader(file)
+        val reader = new Reader(name, file)
         reader.readState()
         newMap = newMap + (name -> reader)
       } catch {
@@ -232,13 +232,14 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
               // move the default reader over to our new one.
               val oldFile = r.file
               r.file = file
+              r.name = name
               r.checkpoint()
               oldFile.delete()
               readerMap = readerMap - ""
               r
             }
             case None => {
-              val reader = new Reader(file)
+              val reader = new Reader(name, file)
               reader.head = _tailId
               reader.checkpoint()
               reader
@@ -301,8 +302,9 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
    * have been read out of order, usually because they refer to transactional reads that were
    * confirmed out of order.
    */
-  case class Reader(_file: File) extends Serialized {
+  case class Reader(_name: String, _file: File) extends Serialized {
     @volatile var file: File = _file
+    @volatile var name: String = _name
 
     private[this] var _head = 0L
     private[this] val _doneSet = new ItemIdList()
@@ -333,6 +335,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
       serialized {
+        log.debug("Checkpoint %s+%s", queueName, name)
         val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
         val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
         newJournalFile.readHead(_head)
@@ -378,6 +381,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     def startReadBehind(readBehindId: Long) {
       val file = fileForId(readBehindId)
       if (!file.isDefined) throw new IOException("Unknown id")
+      log.debug("Entering read-behind for %s+%s: %s", queueName, name, file)
       val jf = JournalFile.openWriter(file.get, timer, syncJournal)
       var lastId = -1L
       while (lastId != readBehindId) {
@@ -416,6 +420,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * End read-behind mode, and close any open journal file.
      */
     def endReadBehind() {
+      log.debug("Leaving read-behind for %s+%s", queueName, name)
       _readBehind.foreach { _.close() }
       _readBehind = None
     }

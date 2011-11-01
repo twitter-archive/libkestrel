@@ -434,7 +434,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       withTempFolder {
         val file = new File(folderName, "a1")
         val j = makeJournal("test")
-        val reader = new j.Reader(file)
+        val reader = new j.Reader("1", file)
         reader.head = 123L
         reader.commit(125L)
         reader.commit(130L)
@@ -461,7 +461,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         jf2.close()
 
         val j = makeJournal("test")
-        val reader = new j.Reader(file)
+        val reader = new j.Reader("1", file)
         reader.readState()
         reader.head mustEqual 900L
         reader.doneSet.toList.sorted mustEqual List(902L, 903L)
@@ -472,7 +472,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       withTempFolder {
         val file = new File(folderName, "a1")
         val j = makeJournal("test")
-        val reader = new j.Reader(file)
+        val reader = new j.Reader("1", file)
         reader.head = 123L
 
         reader.commit(124L)
