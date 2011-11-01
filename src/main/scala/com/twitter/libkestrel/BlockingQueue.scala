@@ -21,8 +21,8 @@ import com.twitter.util.{Future, Time}
 trait BlockingQueue[A <: AnyRef] {
   def put(item: A): Boolean
   def size: Int
-  def get(): Future[A]
-  def get(deadline: Time): Future[A]
+  def get(): Future[Option[A]]
+  def get(deadline: Time): Future[Option[A]]
   def poll(): Option[A]
   def pollIf(predicate: A => Boolean): Option[A]
   def toDebug: String

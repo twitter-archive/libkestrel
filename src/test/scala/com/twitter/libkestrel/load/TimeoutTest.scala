@@ -115,17 +115,18 @@ object TimeoutTest {
         override def run() {
           while (readerDeadline > Time.now) {
             val timeout = readTimeoutHigh + random() % (range + 1)
-            try {
-              val item = queue.get(timeout.milliseconds.fromNow)()
-              item.split("/").map { _.toInt }.toList match {
-                case List(tid, id) =>
-                  received(tid).putIfAbsent(id, new AtomicInteger)
-                  received(tid).get(id).incrementAndGet()
-                case _ =>
-                  println("*** GIBBERISH RECEIVED")
+            val optItem = queue.get(timeout.milliseconds.fromNow)()
+            optItem match {
+              case None =>
+              case Some(item) => {
+                item.split("/").map { _.toInt }.toList match {
+                  case List(tid, id) =>
+                    received(tid).putIfAbsent(id, new AtomicInteger)
+                    received(tid).get(id).incrementAndGet()
+                  case _ =>
+                    println("*** GIBBERISH RECEIVED")
+                }
               }
-            } catch {
-              case e: TimeoutException =>
             }
           }
         }

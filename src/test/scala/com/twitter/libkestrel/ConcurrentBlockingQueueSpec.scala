@@ -23,9 +23,9 @@ object ConcurrentBlockingQueueSpec extends Specification {
       queue.size mustEqual 1
       queue.put("second") mustEqual true
       queue.size mustEqual 2
-      queue.get()() mustEqual "first"
+      queue.get()() mustEqual Some("first")
       queue.size mustEqual 1
-      queue.get()() mustEqual "second"
+      queue.get()() mustEqual Some("second")
       queue.size mustEqual 0
     }
 
@@ -64,7 +64,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
         queue.put("5") mustEqual false
         queue.size mustEqual 5
         (0 until 5).foreach { i =>
-          queue.get()() mustEqual i.toString
+          queue.get()() mustEqual Some(i.toString)
         }
       }
 
@@ -77,7 +77,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
         queue.put("5") mustEqual true
         queue.size mustEqual 5
         (0 until 5).foreach { i =>
-          queue.get()() mustEqual (i + 1).toString
+          queue.get()() mustEqual Some((i + 1).toString)
         }
       }
     }
@@ -90,7 +90,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
       (0 until 10).foreach { i => queue.put(i.toString) }
       (0 until 10).foreach { i =>
         futures(i).isDefined mustEqual true
-        futures(i)() mustEqual i.toString
+        futures(i)() mustEqual Some(i.toString)
       }
     }
 
@@ -98,7 +98,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
       val queue = newQueue()
       val future = queue.get(10.milliseconds.fromNow)
       future.isDefined must eventually(be_==(true))
-      future() must throwA[TimeoutException]
+      future() mustEqual None
     }
 
     "fulfill gets before they timeout" in {
@@ -108,8 +108,8 @@ object ConcurrentBlockingQueueSpec extends Specification {
       queue.put("surprise!")
       future1.isDefined must eventually(be_==(true))
       future2.isDefined must eventually(be_==(true))
-      future1() mustEqual "surprise!"
-      future2() must throwA[TimeoutException]
+      future1() mustEqual Some("surprise!")
+      future2() mustEqual None
     }
 
     "get an item or throw a timeout exception, but not both" in {
@@ -120,13 +120,10 @@ object ConcurrentBlockingQueueSpec extends Specification {
         Thread.sleep(10)
         // the future will throw an exception if it's set twice.
         queue.put("ahoy!")
-        (try {
-          future() == "ahoy!"
-        } catch {
-          case e: TimeoutException =>
-            ex += 1
-            true
-        }) mustEqual true
+        future() match {
+          case Some(x) => x mustEqual "ahoy!"
+          case None => ex += 1
+        }
       }
       if (ex == 0 || ex == 100) println("WARNING: Not really enough timer jitter to make this test valid.")
     }
@@ -147,7 +144,7 @@ object ConcurrentBlockingQueueSpec extends Specification {
 
       val collected = new mutable.HashSet[String]
       futures.foreach { f =>
-        collected += f()
+        collected += f().get
       }
       (0 until count).map { _.toString }.toSet mustEqual collected
     }

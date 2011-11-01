@@ -44,25 +44,25 @@ final class SimpleBlockingQueue[A <: AnyRef](
 
   def size: Int = queue.size
 
-  def get(): Future[A] = get(500.days.fromNow)
+  def get(): Future[Option[A]] = get(500.days.fromNow)
 
-  def get(deadline: Time): Future[A] = {
-    val promise = new Promise[A]
+  def get(deadline: Time): Future[Option[A]] = {
+    val promise = new Promise[Option[A]]
     waitFor(promise, deadline)
     promise
   }
 
-  private def waitFor(promise: Promise[A], deadline: Time) {
+  private def waitFor(promise: Promise[Option[A]], deadline: Time) {
     val item = poll()
     item match {
-      case Some(x) =>
-        promise.setValue(x)
-      case None =>
+      case s @ Some(x) => promise.setValue(s)
+      case None => {
         waiters.add(
           deadline,
           { () => waitFor(promise, deadline) },
-          { () => promise.setException(new TimeoutException("timeout")) }
+          { () => promise.setValue(None) }
         )
+      }
     }
   }
 

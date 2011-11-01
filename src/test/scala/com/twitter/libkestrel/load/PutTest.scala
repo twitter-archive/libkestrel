@@ -98,7 +98,7 @@ object PutTest {
     // drain the queue and verify that items look okay and have a loose ordering.
     val itemSets = (0 until threadCount).map { i => new mutable.HashSet[Int] }.toArray
     while (queue.size > 0) {
-      queue.get()().split("/").map { _.toInt }.toList match {
+      queue.get()().get.split("/").map { _.toInt }.toList match {
         case List(tid, id) =>
           itemSets(tid) += id
         case _ =>

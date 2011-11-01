@@ -58,9 +58,9 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * `waiters` tracks the order for fairness, but `waiterSet` is the definitive set: a waiter may
    * be in the queue but not in the set, which just means that they had a timeout set, and gave up.
    */
-  case class Waiter(timerTask: Option[TimerTask], promise: Promise[A])
+  case class Waiter(timerTask: Option[TimerTask], promise: Promise[Option[A]])
   private[this] val waiters = new ConcurrentLinkedQueue[Waiter]
-  private[this] val waiterSet = new ConcurrentHashMap[Promise[A], Promise[A]]
+  private[this] val waiterSet = new ConcurrentHashMap[Promise[Option[A]], Promise[Option[A]]]
 
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
@@ -103,12 +103,12 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue, waiting forever if necessary.
    */
-  def get(): Future[A] = get(None)
+  def get(): Future[Option[A]] = get(None)
 
   /**
    * Get the next item from the queue if it arrives before a timeout.
    */
-  def get(deadline: Time): Future[A] = get(Some(deadline))
+  def get(deadline: Time): Future[Option[A]] = get(Some(deadline))
 
   /**
    * Get the next item from the queue if one is immediately available.
@@ -129,13 +129,13 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
-  private def get(deadline: Option[Time]): Future[A] = {
-    val promise = new Promise[A]
+  private def get(deadline: Option[Time]): Future[Option[A]] = {
+    val promise = new Promise[Option[A]]
     waiterSet.put(promise, promise)
     val timerTask = deadline.map { d =>
       timer.schedule(d) {
         if (waiterSet.remove(promise) ne null) {
-          promise.setException(new TimeoutException(d.toString))
+          promise.setValue(None)
         }
       }
     }
@@ -186,7 +186,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
         }
         if (waiter ne null) {
           waiter.timerTask.foreach { _.cancel() }
-          waiter.promise.setValue(item)
+          waiter.promise.setValue(Some(item))
           queue.poll()
           elementCount.decrementAndGet()
         }

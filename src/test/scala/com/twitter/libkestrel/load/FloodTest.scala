@@ -122,11 +122,7 @@ object FloodTest {
               polls += 1
               queue.poll()
             } else {
-              try {
-                Some(queue.get(1.millisecond.fromNow)())
-              } catch {
-                case e: TimeoutException => None
-              }
+              queue.get(1.millisecond.fromNow)()
             }
             if (item.isDefined) count += 1
             if (validate) {
