@@ -101,27 +101,57 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     }
 
     "fileForId" in {
-      withTempFolder {
-        List(
-          ("test.901", 901),
-          ("test.8000", 8000),
-          ("test.1", 1),
-          ("test.5005", 5005)
-        ).foreach { case (name, id) =>
-          val jf = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
-          jf.put(QueueItem(id, Time.now, None, new Array[Byte](5)))
-          jf.close()
-        }
+      "startup" in {
+        withTempFolder {
+          List(
+            ("test.901", 901),
+            ("test.8000", 8000),
+            ("test.1", 1),
+            ("test.5005", 5005)
+          ).foreach { case (name, id) =>
+            val jf = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
+            jf.put(QueueItem(id, Time.now, None, new Array[Byte](5)))
+            jf.close()
+          }
 
-        val j = makeJournal("test")
-        j.fileInfoForId(1) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(0) mustEqual None
-        j.fileInfoForId(555) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(900) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(901) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
-        j.fileInfoForId(902) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
-        j.fileInfoForId(6666) mustEqual Some(FileInfo(new File(folderName, "test.5005"), 5005, 5005, 1, 5))
-        j.fileInfoForId(9999) mustEqual Some(FileInfo(new File(folderName, "test.8000"), 8000, 8000, 1, 5))
+          val j = makeJournal("test")
+          j.fileInfoForId(1) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+          j.fileInfoForId(0) mustEqual None
+          j.fileInfoForId(555) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+          j.fileInfoForId(900) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+          j.fileInfoForId(901) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
+          j.fileInfoForId(902) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
+          j.fileInfoForId(6666) mustEqual Some(FileInfo(new File(folderName, "test.5005"), 5005, 5005, 1, 5))
+          j.fileInfoForId(9999) mustEqual Some(FileInfo(new File(folderName, "test.8000"), 8000, 8000, 1, 5))
+        }
+      }
+
+      "during journal rotation" in {
+        withTempFolder {
+          Time.withCurrentTimeFrozen { timeMutator =>
+            val j = makeJournal("test", 1.kilobyte)
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            j.put(new Array[Byte](512), Time.now, None)
+            timeMutator.advance(1.millisecond)
+            j.put(new Array[Byte](512), Time.now, None)
+
+            val file1 = new File(folderName, "test." + 4.milliseconds.ago.inMilliseconds)
+            val file2 = new File(folderName, "test." + 3.milliseconds.ago.inMilliseconds)
+            val file3 = new File(folderName, "test." + 1.millisecond.ago.inMilliseconds)
+
+            j.fileInfoForId(1) mustEqual Some(FileInfo(file1, 1, 2, 2, 1024))
+            j.fileInfoForId(2) mustEqual Some(FileInfo(file1, 1, 2, 2, 1024))
+            j.fileInfoForId(3) mustEqual Some(FileInfo(file2, 3, 4, 2, 1024))
+            j.fileInfoForId(4) mustEqual Some(FileInfo(file2, 3, 4, 2, 1024))
+            j.fileInfoForId(5) mustEqual Some(FileInfo(file3, 5, 0, 0, 0))
+            j.close()
+          }
+        }
       }
     }
 

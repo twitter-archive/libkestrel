@@ -321,6 +321,8 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       val id = _tailId
       val item = QueueItem(_tailId, addTime, expireTime, data)
       val future = _journalFile.put(item)
+      currentItems += 1
+      currentBytes += data.size
       if (_journalFile.position >= maxFileSize.inBytes) rotate()
       (item, future)
     }
