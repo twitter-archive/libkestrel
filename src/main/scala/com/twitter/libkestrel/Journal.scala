@@ -9,6 +9,8 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
 
+case class FileInfo(file: File, headId: Long, tailId: Long, items: Int, bytes: Long)
+
 object Journal {
   def getQueueNamesFromFolder(path: File): Set[String] = {
     path.list().filter { name =>
@@ -44,11 +46,15 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
 
   val prefix = new File(queuePath, queueName)
 
-  @volatile var idMap = immutable.TreeMap.empty[Long, File]
+  @volatile var idMap = immutable.TreeMap.empty[Long, FileInfo]
   @volatile var readerMap = immutable.Map.empty[String, Reader]
 
   @volatile private[this] var _journalFile: JournalFile = null
   @volatile private[this] var _tailId = 0L
+
+  // items & bytes in the current journal file so far:
+  @volatile private[this] var currentItems = 0
+  @volatile private[this] var currentBytes = 0L
 
   removeTemporaryFiles()
   buildIdMap()
@@ -71,18 +77,10 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
    * seen in each file. This lets us quickly find the right file when we look for an item id.
    */
   private[this] def buildIdMap() {
-    var newMap = immutable.TreeMap.empty[Long, File]
+    var newMap = immutable.TreeMap.empty[Long, FileInfo]
     writerFiles().foreach { file =>
-      try {
-        val j = JournalFile.openWriter(file, timer, Duration.MaxValue)
-        j.readNext() match {
-          case Some(JournalFile.Record.Put(item)) => {
-            newMap = newMap + (item.id -> file)
-          }
-          case _ =>
-        }
-      } catch {
-        case e: IOException => log.warning("Skipping corrupted file: %s", file)
+      scanJournalFile(file).foreach { fileInfo =>
+        newMap += (fileInfo.headId -> fileInfo)
       }
     }
     idMap = newMap
@@ -112,7 +110,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
   }
 
-  def fileForId(id: Long): Option[File] = {
+  def fileInfoForId(id: Long): Option[FileInfo] = {
     idMap.to(id).lastOption.map { case (k, v) => v }
   }
 
@@ -140,50 +138,72 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
   }
 
+  // scan a journal file to pull out the # items, # bytes, and head & tail ids.
+  private[this] def scanJournalFile(file: File): Option[FileInfo] = {
+    var firstId: Option[Long] = None
+    var tailId = 0L
+    var items = 0
+    var bytes = 0L
+    val journalFile = try {
+      JournalFile.openWriter(file, timer, syncJournal)
+    } catch {
+      case e: IOException => {
+        log.error(e, "Unable to open journal %s; aborting!", file)
+        return None
+      }
+    }
+
+    try {
+      log.info("Scanning journal '%s' file %s", queueName, file)
+      journalFile.foreach { entry =>
+        val position = journalFile.position
+        entry match {
+          case JournalFile.Record.Put(item) => {
+            if (firstId == None) firstId = Some(item.id)
+            items += 1
+            bytes += item.data.size
+            tailId = item.id
+          }
+          case _ =>
+        }
+      }
+      journalFile.close()
+    } catch {
+      case e @ CorruptedJournalException(position, file, message) => {
+        log.error("Corrupted journal %s at position %d; truncating. DATA MAY HAVE BEEN LOST!",
+          file, position)
+        journalFile.close()
+        val trancateWriter = new FileOutputStream(file, true).getChannel
+        try {
+          trancateWriter.truncate(position)
+        } finally {
+          trancateWriter.close()
+        }
+        // try again on the truncated file.
+        return scanJournalFile(file)
+      }
+    }
+    if (firstId == None) {
+      // not a single thing in this journal file.
+      log.info("Empty journal file %s -- erasing.", file)
+      file.delete()
+      None
+    } else {
+      firstId.map { id => FileInfo(file, id, tailId, items, bytes) }
+    }
+  }
+
   private[this] def openJournal() {
     if (idMap.size > 0) {
-      val (id, file) = idMap.last
+      val (id, fileInfo) = idMap.last
       try {
-        val journalFile = JournalFile.openWriter(file, timer, syncJournal)
-        try {
-          log.info("Scanning journal '%s' file %s", queueName, file)
-          var lastUpdate = 0L
-          journalFile.foreach { entry =>
-            val position = journalFile.position
-            if (position >= lastUpdate + 10.megabytes.inBytes) {
-              log.info("Continuing to read '%s' file %s; %s so far...", queueName, file,
-                position.bytes.toHuman)
-              lastUpdate += 10.megabytes.inBytes
-            }
-            entry match {
-              case JournalFile.Record.Put(item) => _tailId = item.id
-              case _ =>
-            }
-          }
-        } catch {
-          case e @ CorruptedJournalException(position, file, message) => {
-            log.error("Corrupted journal %s at position %d; truncating. DATA MAY HAVE BEEN LOST!",
-              file, position)
-            val trancateWriter = new FileOutputStream(file, true).getChannel
-            try {
-              trancateWriter.truncate(position)
-            } finally {
-              trancateWriter.close()
-            }
-            throw e
-          }
-        } finally {
-          journalFile.close()
-        }
-        _journalFile = JournalFile.append(file, timer, syncJournal)
+        _journalFile = JournalFile.append(fileInfo.file, timer, syncJournal)
+        _tailId = fileInfo.tailId
+        currentItems = fileInfo.items
+        currentBytes = fileInfo.bytes
       } catch {
-        case e: CorruptedJournalException => {
-          // we truncated it. try again.
-          _tailId = 0
-          openJournal()
-        }
         case e: IOException => {
-          log.error("Unable to open journal %s; aborting!", file)
+          log.error("Unable to open journal %s; aborting!", fileInfo.file)
           throw e
         }
       }
@@ -206,17 +226,26 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
   private[this] def checkOldFiles() {
     val minHead = readerMap.values.foldLeft(tail) { (n, r) => n min (r.head + 1) }
     // all the files that start off with unreferenced ids, minus the last. :)
-    idMap.takeWhile { case (id, file) => id <= minHead }.dropRight(1).foreach { case (id, file) =>
-      log.info("Erasing unused journal file for '%s': %s", queueName, file)
+    idMap.takeWhile { case (id, fileInfo) => id <= minHead }.dropRight(1).foreach { case (id, fileInfo) =>
+      log.info("Erasing unused journal file for '%s': %s", queueName, fileInfo.file)
       idMap = idMap - id
-      file.delete()
+      fileInfo.file.delete()
     }
   }
 
   private[this] def rotate() {
+    if (_journalFile ne null) {
+      // fix up id map to have the new item/byte count
+      idMap.last match { case (id, info) =>
+        idMap += (id -> FileInfo(_journalFile.file, id, _tailId, currentItems, currentBytes))
+      }
+    }
+    // open new file
     var newFile = uniqueFile(new File(queuePath, queueName + "."))
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
-    idMap = idMap + (_tailId + 1 -> newFile)
+    currentItems = 0
+    currentBytes = 0
+    idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
     checkOldFiles()
   }
 
@@ -381,10 +410,10 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * file. This means the queue no longer wants to try keeping every item in memory.
      */
     def startReadBehind(readBehindId: Long) {
-      val file = fileForId(readBehindId)
-      if (!file.isDefined) throw new IOException("Unknown id")
+      val fileInfo = fileInfoForId(readBehindId)
+      if (!fileInfo.isDefined) throw new IOException("Unknown id")
       log.debug("Entering read-behind for %s+%s: %s", queueName, name, file)
-      val jf = JournalFile.openWriter(file.get, timer, syncJournal)
+      val jf = JournalFile.openWriter(fileInfo.get.file, timer, syncJournal)
       var lastId = -1L
       while (lastId != readBehindId) {
         jf.readNext() match {
@@ -410,10 +439,10 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       _readBehind.get.readNext() match {
         case None => {
           _readBehind.foreach { _.close() }
-          val file = fileForId(_readBehindId + 1)
-          if (!file.isDefined) throw new IOException("Unknown id")
+          val fileInfo = fileInfoForId(_readBehindId + 1)
+          if (!fileInfo.isDefined) throw new IOException("Unknown id")
           log.debug("Read-behind for %s+%s moving to: %s", queueName, name, file)
-          _readBehind = Some(JournalFile.openWriter(file.get, timer, syncJournal))
+          _readBehind = Some(JournalFile.openWriter(fileInfo.get.file, timer, syncJournal))
           nextReadBehind()
         }
         case Some(JournalFile.Record.Put(item)) => {

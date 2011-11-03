@@ -48,12 +48,14 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           List(
             "test.901", "test.8000", "test.3leet", "test.1", "test.5005"
           ).foreach { name =>
-            JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue).close()
+            val jf = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
+            jf.put(QueueItem(1L, Time.now, None, new Array[Byte](1)))
+            jf.close()
           }
 
           val j = makeJournal("test")
           j.writerFiles().map { _.getName }.toSet mustEqual
-            Set("test.901", "test.8000", "test.1", "test.5005", "test." + Time.now.inMilliseconds)
+            Set("test.901", "test.8000", "test.1", "test.5005")
           j.readerFiles().map { _.getName }.toSet mustEqual
             Set("test.read.client1", "test.read.client2")
         }
@@ -107,19 +109,19 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           ("test.5005", 5005)
         ).foreach { case (name, id) =>
           val jf = JournalFile.createWriter(new File(folderName, name), null, Duration.MaxValue)
-          jf.put(QueueItem(id, Time.now, None, new Array[Byte](1)))
+          jf.put(QueueItem(id, Time.now, None, new Array[Byte](5)))
           jf.close()
         }
 
         val j = makeJournal("test")
-        j.fileForId(1) mustEqual Some(new File(folderName, "test.1"))
-        j.fileForId(0) mustEqual None
-        j.fileForId(555) mustEqual Some(new File(folderName, "test.1"))
-        j.fileForId(900) mustEqual Some(new File(folderName, "test.1"))
-        j.fileForId(901) mustEqual Some(new File(folderName, "test.901"))
-        j.fileForId(902) mustEqual Some(new File(folderName, "test.901"))
-        j.fileForId(6666) mustEqual Some(new File(folderName, "test.5005"))
-        j.fileForId(9999) mustEqual Some(new File(folderName, "test.8000"))
+        j.fileInfoForId(1) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+        j.fileInfoForId(0) mustEqual None
+        j.fileInfoForId(555) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+        j.fileInfoForId(900) mustEqual Some(FileInfo(new File(folderName, "test.1"), 1, 1, 1, 5))
+        j.fileInfoForId(901) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
+        j.fileInfoForId(902) mustEqual Some(FileInfo(new File(folderName, "test.901"), 901, 901, 1, 5))
+        j.fileInfoForId(6666) mustEqual Some(FileInfo(new File(folderName, "test.5005"), 5005, 5005, 1, 5))
+        j.fileInfoForId(9999) mustEqual Some(FileInfo(new File(folderName, "test.8000"), 8000, 8000, 1, 5))
       }
     }
 
@@ -302,6 +304,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     "truncate corrupted journal" in {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
+          println("hello!")
           val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
 
           // write 2 valid entries, but truncate the last one to make it corrupted.

@@ -98,7 +98,7 @@ object JournalFile {
   }
 }
 
-class JournalFile(file: File, timer: Timer, syncJournal: Duration)
+class JournalFile(val file: File, timer: Timer, syncJournal: Duration)
   extends Iterable[JournalFile.Record]
 {
   import JournalFile._
