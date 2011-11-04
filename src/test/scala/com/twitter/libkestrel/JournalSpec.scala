@@ -452,6 +452,23 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
   }
 
   "Journal#Reader" should {
+    def makeFiles(folderName: String) {
+      val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
+      jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+      jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+      jf1.close()
+
+      val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
+      jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+      jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+      jf2.close()
+
+      val jf3 = JournalFile.createWriter(new File(folderName, "test.3"), null, Duration.MaxValue)
+      jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
+      jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
+      jf3.close()
+    }
+
     "be created with a checkpoint file" in {
       withTempFolder {
         val j = makeJournal("test")
@@ -586,23 +603,6 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
 
       "across journal files" in {
-        def makeFiles(folderName: String) {
-          val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
-          jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-          jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
-          jf1.close()
-
-          val jf2 = JournalFile.createWriter(new File(folderName, "test.2"), null, Duration.MaxValue)
-          jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
-          jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
-          jf2.close()
-
-          val jf3 = JournalFile.createWriter(new File(folderName, "test.3"), null, Duration.MaxValue)
-          jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
-          jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
-          jf3.close()
-        }
-
         "when asked to" in {
           withTempFolder {
             makeFiles(folderName)
@@ -652,6 +652,22 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           reader.inReadBehind mustEqual false
           j.close()
         }
+      }
+    }
+
+    "fileInfosAfterReadBehind" in {
+      withTempFolder {
+        makeFiles(folderName)
+        val j = makeJournal("test")
+        val reader = j.reader("client")
+        reader.head = 100L
+        reader.startReadBehind(100L)
+        reader.nextReadBehind(followFiles = false).map { _.id } mustEqual Some(101L)
+        reader.nextReadBehind(followFiles = false) mustEqual None
+        reader.fileInfosAfterReadBehind.toList mustEqual List(
+          FileInfo(new File(folderName, "test.2"), 102L, 103L, 2, 6),
+          FileInfo(new File(folderName, "test.3"), 104L, 105L, 2, 6)
+        )
       }
     }
 

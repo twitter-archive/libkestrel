@@ -448,6 +448,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
             _readBehind = Some(JournalFile.openWriter(fileInfo.get.file, timer, syncJournal))
             nextReadBehind()
           } else {
+            endReadBehind()
             None
           }
         }
@@ -473,6 +474,10 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     }
 
     def inReadBehind = _readBehind.isDefined
+
+    def fileInfosAfterReadBehind: Seq[FileInfo] = {
+      idMap.from(_readBehindId).values.toSeq
+    }
 
     /*
      * Scan through the journals from head to tail and count how many items there are, and how
