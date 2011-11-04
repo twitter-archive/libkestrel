@@ -334,7 +334,6 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
     "truncate corrupted journal" in {
       withTempFolder {
         Time.withCurrentTimeFrozen { timeMutator =>
-          println("hello!")
           val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
 
           // write 2 valid entries, but truncate the last one to make it corrupted.
@@ -587,7 +586,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
       }
 
       "across journal files" in {
-        withTempFolder {
+        def makeFiles(folderName: String) {
           val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
           jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
           jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
@@ -602,16 +601,35 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
           jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
           jf3.close()
+        }
 
-          val j = makeJournal("test")
-          val reader = j.reader("client")
-          reader.head = 102L
-          reader.startReadBehind(102L)
-          reader.nextReadBehind().map { _.id } mustEqual Some(103L)
+        "when asked to" in {
+          withTempFolder {
+            makeFiles(folderName)
+            val j = makeJournal("test")
+            val reader = j.reader("client")
+            reader.head = 102L
+            reader.startReadBehind(102L)
+            reader.nextReadBehind().map { _.id } mustEqual Some(103L)
 
-          val item = reader.nextReadBehind()
-          item.map { _.id } mustEqual Some(104L)
-          new String(item.get.data) mustEqual "104"
+            val item = reader.nextReadBehind()
+            item.map { _.id } mustEqual Some(104L)
+            new String(item.get.data) mustEqual "104"
+            j.close()
+          }
+        }
+
+        "when asked not to" in {
+          withTempFolder {
+            makeFiles(folderName)
+            val j = makeJournal("test")
+            val reader = j.reader("client")
+            reader.head = 102L
+            reader.startReadBehind(102L)
+            reader.nextReadBehind(followFiles = false).map { _.id } mustEqual Some(103L)
+            reader.nextReadBehind(followFiles = false) mustEqual None
+            j.close()
+          }
         }
       }
 
@@ -632,6 +650,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
           reader.inReadBehind mustEqual true
           reader.nextReadBehind().map { _.id } mustEqual None
           reader.inReadBehind mustEqual false
+          j.close()
         }
       }
     }
@@ -660,6 +679,7 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         reader.countItemsAndBytes() mustEqual (38, 38 * 3)
 
         reader.inReadBehind mustEqual false
+        j.close()
       }
     }
   }

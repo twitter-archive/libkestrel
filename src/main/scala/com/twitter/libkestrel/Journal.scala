@@ -433,7 +433,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * If we've caught up, turn off read-behind and return None.
      */
     @tailrec
-    final def nextReadBehind(): Option[QueueItem] = {
+    final def nextReadBehind(followFiles: Boolean = true): Option[QueueItem] = {
       if (_readBehindId == tail) {
         endReadBehind()
         return None
@@ -441,11 +441,15 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       _readBehind.get.readNext() match {
         case None => {
           _readBehind.foreach { _.close() }
-          val fileInfo = fileInfoForId(_readBehindId + 1)
-          if (!fileInfo.isDefined) throw new IOException("Unknown id")
-          log.debug("Read-behind for %s+%s moving to: %s", queueName, name, file)
-          _readBehind = Some(JournalFile.openWriter(fileInfo.get.file, timer, syncJournal))
-          nextReadBehind()
+          if (followFiles) {
+            val fileInfo = fileInfoForId(_readBehindId + 1)
+            if (!fileInfo.isDefined) throw new IOException("Unknown id")
+            log.debug("Read-behind for %s+%s moving to: %s", queueName, name, file)
+            _readBehind = Some(JournalFile.openWriter(fileInfo.get.file, timer, syncJournal))
+            nextReadBehind()
+          } else {
+            None
+          }
         }
         case Some(JournalFile.Record.Put(item)) => {
           _readBehindId = item.id
