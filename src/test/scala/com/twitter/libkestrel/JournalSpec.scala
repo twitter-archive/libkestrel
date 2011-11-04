@@ -670,33 +670,5 @@ class JournalSpec extends Specification with TempFolder with TestLogging {
         )
       }
     }
-
-    "count items & bytes" in {
-      withTempFolder {
-        val jf1 = JournalFile.createWriter(new File(folderName, "test.1"), null, Duration.MaxValue)
-        (101 to 150).foreach { i =>
-          jf1.put(QueueItem(i.toLong, Time.now, None, i.toString.getBytes))
-        }
-        jf1.close()
-
-        val jf2 = JournalFile.createReader(new File(folderName, "test.read.1"), null, Duration.MaxValue)
-        jf2.readHead(110L)
-        jf2.readDone(Array[Long]())
-        jf2.close()
-
-        val j = makeJournal("test")
-        val reader = j.reader("1")
-        reader.countItemsAndBytes() mustEqual (40, 40 * 3)
-
-        reader.commit(112L)
-        reader.countItemsAndBytes() mustEqual (39, 39 * 3)
-
-        reader.commit(111L)
-        reader.countItemsAndBytes() mustEqual (38, 38 * 3)
-
-        reader.inReadBehind mustEqual false
-        j.close()
-      }
-    }
   }
 }

@@ -478,25 +478,5 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     def fileInfosAfterReadBehind: Seq[FileInfo] = {
       idMap.from(_readBehindId).values.toSeq
     }
-
-    /*
-     * Scan through the journals from head to tail and count how many items there are, and how
-     * many total bytes are used by them.
-     */
-    def countItemsAndBytes(): (Int, Long) = {
-      log.debug("Counting items/bytes for %s+%s", queueName, name)
-      var items = 0
-      var bytes = 0L
-      startReadBehind(head)
-      var item = nextReadBehind()
-      while (item.isDefined) {
-        if (!(doneSet contains item.get.id)) {
-          items += 1
-          bytes += item.get.data.size
-        }
-        item = nextReadBehind()
-      }
-      (items, bytes)
-    }
   }
 }
