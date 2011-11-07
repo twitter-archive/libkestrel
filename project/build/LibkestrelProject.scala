@@ -27,6 +27,8 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   val asm = "asm" % "asm" % "1.5.3" % "test"
   val objenesis = "org.objenesis" % "objenesis" % "1.1" % "test"
 
+  val scalatest = "org.scalatest" % "scalatest_2.8.1" % "1.5.1"
+
   override def subversionRepository = Some("http://svn.local.twitter.com/maven")
 
   // generate a jar that can be run for load tests.
