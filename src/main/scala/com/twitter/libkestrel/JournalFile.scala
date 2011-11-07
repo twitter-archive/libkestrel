@@ -127,6 +127,7 @@ class JournalFile(val file: File, timer: Timer, syncJournal: Duration)
   def create(header: Int) {
     writer = new PeriodicSyncFile(file, timer, syncJournal)
     writer.position = 0
+    writer.truncate()
     val b = buffer(4)
     b.order(ByteOrder.BIG_ENDIAN)
     b.putInt(header)

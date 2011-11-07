@@ -84,4 +84,8 @@ class PeriodicSyncFile(file: File, timer: Timer, period: Duration) {
   def position_=(p: Long) {
     writer.position(p)
   }
+
+  def truncate() {
+    writer.truncate(position)
+  }
 }
