@@ -412,16 +412,21 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
      * file. This means the queue no longer wants to try keeping every item in memory.
      */
     def startReadBehind(readBehindId: Long) {
-      val fileInfo = fileInfoForId(readBehindId)
-      if (!fileInfo.isDefined) throw new IOException("Unknown id")
+      val fileInfo = fileInfoForId(readBehindId).getOrElse { idMap(earliestHead) }
       log.debug("Entering read-behind for %s+%s: %s", queueName, name, file)
-      val jf = JournalFile.openWriter(fileInfo.get.file, timer, syncJournal)
-      var lastId = -1L
-      while (lastId != readBehindId) {
-        jf.readNext() match {
-          case None => throw new IOException("Can't find id " + head + " in " + file)
-          case Some(JournalFile.Record.Put(QueueItem(id, _, _, _))) => lastId = id
-          case _ =>
+      val jf = JournalFile.openWriter(fileInfo.file, timer, syncJournal)
+      if (readBehindId >= earliestHead) {
+        var lastId = -1L
+        while (lastId < readBehindId) {
+          jf.readNext() match {
+            case None => {
+              // just end read-behind immediately.
+              _readBehindId = tail
+              return
+            }
+            case Some(JournalFile.Record.Put(QueueItem(id, _, _, _))) => lastId = id
+            case _ =>
+          }
         }
       }
       _readBehind = Some(jf)
