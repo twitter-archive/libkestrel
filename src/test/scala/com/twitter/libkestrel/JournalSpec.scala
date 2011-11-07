@@ -40,7 +40,8 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
     "find reader/writer files" in {
       Time.withCurrentTimeFrozen { timeMutator =>
         List(
-          "test.read.client1", "test.read.client2", "test.read.client1~~", "test.readmenot"
+          "test.read.client1", "test.read.client2", "test.read.client1~~", "test.readmenot",
+          "test.read."
         ).foreach { name =>
           JournalFile.createReader(new File(testFolder, name), null, Duration.MaxValue).close()
         }
@@ -57,6 +58,14 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
           Set("test.901", "test.8000", "test.1", "test.5005")
         j.readerFiles().map { _.getName }.toSet mustEqual
           Set("test.read.client1", "test.read.client2")
+        j.close()
+
+        new File(testFolder, "test.read.client1").delete()
+        new File(testFolder, "test.read.client2").delete()
+        val j2 = makeJournal("test")
+        j2.readerFiles().map { _.getName }.toSet mustEqual
+          Set("test.read.")
+        j2.close()
       }
     }
 

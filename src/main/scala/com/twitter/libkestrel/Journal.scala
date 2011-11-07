@@ -117,7 +117,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
   private[this] def buildReaderMap() {
     var newMap = immutable.HashMap.empty[String, Reader]
     readerFiles().foreach { file =>
-      val name = file.getName.split("\\.")(2)
+      val name = file.getName.split("\\.", 3)(2)
       try {
         val reader = new Reader(name, file)
         reader.readState()
