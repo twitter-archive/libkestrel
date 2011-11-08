@@ -21,7 +21,6 @@ import com.twitter.conversions.time._
 import com.twitter.util._
 import java.io._
 import java.nio.{ByteBuffer, ByteOrder}
-
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
@@ -45,7 +44,7 @@ trait TempFolder extends AbstractSuite { self: Suite =>
   }
 }
 
-trait TestLogging extends AbstractSuite { self: Suite =>
+trait TestLogging2 extends AbstractSuite { self: Suite =>
   import com.twitter.logging._
   import java.util.{logging => jlogging}
 
@@ -67,7 +66,7 @@ trait TestLogging extends AbstractSuite { self: Suite =>
   }
 }
 
-class JournaledQueue2Spec extends Spec with ShouldMatchers with TempFolder with TestLogging {
+class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
   val READER_CONFIG = new JournaledQueueReaderConfig()
   val CONFIG = new JournaledQueueConfig(name = "test")
 
@@ -124,7 +123,7 @@ class JournaledQueue2Spec extends Spec with ShouldMatchers with TempFolder with 
         val q = new JournaledQueue(CONFIG, testFolder, null)
         val reader = q.reader("")
 
-        assert(reader.items == 5)
+        assert(reader.items === 5)
         assert(reader.bytes === 5 * 1024)
         assert(reader.memoryBytes === 5 * 1024)
         val item = reader.get(None)()
@@ -135,7 +134,7 @@ class JournaledQueue2Spec extends Spec with ShouldMatchers with TempFolder with 
 
       it("in read-behind") {
         setupWriteJournals(4, 2)
-        (0L to 3L).foreach { readId =>
+        (0L to 4L).foreach { readId =>
           setupReadJournal("", readId)
           val readerConfig = READER_CONFIG.copy(maxMemorySize = 4.kilobytes)
           val q = new JournaledQueue(CONFIG.copy(defaultReaderConfig = readerConfig), testFolder, null)
