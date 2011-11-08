@@ -66,11 +66,11 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
   journal.foreach { j =>
     j.readerMap.foreach { case (name, _) => reader(name) }
   }
-  
+
   def reader(name: String) = {
-    readerMap.get("name").getOrElse {
+    readerMap.get(name).getOrElse {
       synchronized {
-        readerMap.get("name").getOrElse {
+        readerMap.get(name).getOrElse {
           val readerConfig = config.readerConfigs.get(name).getOrElse(config.defaultReaderConfig)
           val reader = new Reader(name, readerConfig)
           journal.foreach { j => reader.loadFromJournal(j.reader(name)) }
