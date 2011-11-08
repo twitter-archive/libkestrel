@@ -22,41 +22,42 @@ import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
-import org.specs.Specification
+import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class JournalReaderSpec extends Specification with TestLogging with TestFolder {
+class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
     new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue)
 
   def makeJournal(name: String): Journal = makeJournal(name, 16.megabytes)
 
-  "Journal#Reader" should {
-    def makeFiles() {
-      val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-      jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-      jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
-      jf1.close()
+  def makeFiles() {
+    val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
+    jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
+    jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+    jf1.close()
 
-      val jf2 = JournalFile.createWriter(new File(testFolder, "test.2"), null, Duration.MaxValue)
-      jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
-      jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
-      jf2.close()
+    val jf2 = JournalFile.createWriter(new File(testFolder, "test.2"), null, Duration.MaxValue)
+    jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+    jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+    jf2.close()
 
-      val jf3 = JournalFile.createWriter(new File(testFolder, "test.3"), null, Duration.MaxValue)
-      jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
-      jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
-      jf3.close()
-    }
+    val jf3 = JournalFile.createWriter(new File(testFolder, "test.3"), null, Duration.MaxValue)
+    jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
+    jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
+    jf3.close()
+  }
 
-    "be created with a checkpoint file" in {
+  describe("Journal#Reader") {
+    it("created with a checkpoint file") {
       val j = makeJournal("test")
       j.reader("hello")
 
-      new File(testFolder, "test.read.hello").exists mustEqual true
+      assert(new File(testFolder, "test.read.hello").exists)
       j.close()
     }
 
-    "write a checkpoint" in {
+    it("write a checkpoint") {
       val file = new File(testFolder, "a1")
       val j = makeJournal("test")
       val reader = new j.Reader("1", file)
@@ -65,13 +66,13 @@ class JournalReaderSpec extends Specification with TestLogging with TestFolder {
       reader.commit(130L)
       reader.checkpoint()
 
-      JournalFile.openReader(file, null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(file, null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(123L),
         JournalFile.Record.ReadDone(Array(125L, 130L))
-      )
+      ))
     }
 
-    "read a checkpoint" in {
+    it("read a checkpoint") {
       val file = new File(testFolder, "a1")
       val jf = JournalFile.createReader(file, null, Duration.MaxValue)
       jf.readHead(900L)
@@ -86,50 +87,50 @@ class JournalReaderSpec extends Specification with TestLogging with TestFolder {
       val j = makeJournal("test")
       val reader = new j.Reader("1", file)
       reader.readState()
-      reader.head mustEqual 900L
-      reader.doneSet.toList.sorted mustEqual List(902L, 903L)
+      assert(reader.head === 900L)
+      assert(reader.doneSet.toList.sorted === List(902L, 903L))
     }
 
-    "track committed items" in {
+    it("track committed items") {
       val file = new File(testFolder, "a1")
       val j = makeJournal("test")
       val reader = new j.Reader("1", file)
       reader.head = 123L
 
       reader.commit(124L)
-      reader.head mustEqual 124L
-      reader.doneSet.toList.sorted mustEqual List()
+      assert(reader.head === 124L)
+      assert(reader.doneSet.toList.sorted === List())
 
       reader.commit(126L)
       reader.commit(127L)
       reader.commit(129L)
-      reader.head mustEqual 124L
-      reader.doneSet.toList.sorted mustEqual List(126L, 127L, 129L)
+      assert(reader.head === 124L)
+      assert(reader.doneSet.toList.sorted === List(126L, 127L, 129L))
 
       reader.commit(125L)
-      reader.head mustEqual 127L
-      reader.doneSet.toList.sorted mustEqual List(129L)
+      assert(reader.head === 127L)
+      assert(reader.doneSet.toList.sorted === List(129L))
 
       reader.commit(130L)
       reader.commit(128L)
-      reader.head mustEqual 130L
-      reader.doneSet.toList.sorted mustEqual List()
+      assert(reader.head === 130L)
+      assert(reader.doneSet.toList.sorted === List())
     }
 
-    "flush all items" in {
+    it("flush all items") {
       val j = makeJournal("test")
       val (item1, future1) = j.put("hi".getBytes, Time.now, None)()
       val reader = j.reader("1")
       reader.commit(item1.id)
       val (item2, future2) = j.put("bye".getBytes, Time.now, None)()
 
-      reader.head mustEqual item1.id
+      assert(reader.head === item1.id)
       reader.flush()
-      reader.head mustEqual item2.id
+      assert(reader.head === item2.id)
     }
 
-    "read-behind" in {
-      "start" in {
+    describe("read-behind") {
+      it("start") {
         val jf = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
         jf.put(QueueItem(100L, Time.now, None, "100".getBytes))
         jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
@@ -138,18 +139,18 @@ class JournalReaderSpec extends Specification with TestLogging with TestFolder {
         val j = makeJournal("test")
         val reader = j.reader("client1")
         reader.head = 100L
-        reader.inReadBehind mustEqual false
+        assert(!reader.inReadBehind)
         reader.startReadBehind(100L)
-        reader.inReadBehind mustEqual true
+        assert(reader.inReadBehind)
         val item = reader.nextReadBehind()
-        item.map { _.id } mustEqual Some(101L)
-        new String(item.get.data) mustEqual "101"
+        assert(item.map { _.id } === Some(101L))
+        assert(new String(item.get.data) === "101")
 
         reader.endReadBehind()
-        reader.inReadBehind mustEqual false
+        assert(!reader.inReadBehind)
       }
 
-      "start at file edge" in {
+      it("start at file edge") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
         jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
         jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
@@ -164,37 +165,37 @@ class JournalReaderSpec extends Specification with TestLogging with TestFolder {
         val reader = j.reader("client")
         reader.head = 101L
         reader.startReadBehind(101L)
-        reader.nextReadBehind().map { _.id } mustEqual Some(102L)
+        assert(reader.nextReadBehind().map { _.id } === Some(102L))
       }
 
-      "across journal files" in {
-        "when asked to" in {
+      describe("across journal files") {
+        it("when asked to") {
           makeFiles()
           val j = makeJournal("test")
           val reader = j.reader("client")
           reader.head = 102L
           reader.startReadBehind(102L)
-          reader.nextReadBehind().map { _.id } mustEqual Some(103L)
+          assert(reader.nextReadBehind().map { _.id } === Some(103L))
 
           val item = reader.nextReadBehind()
-          item.map { _.id } mustEqual Some(104L)
-          new String(item.get.data) mustEqual "104"
+          assert(item.map { _.id } === Some(104L))
+          assert(new String(item.get.data) === "104")
           j.close()
         }
 
-        "when asked not to" in {
+        it("when asked not to") {
           makeFiles()
           val j = makeJournal("test")
           val reader = j.reader("client")
           reader.head = 102L
-          reader.startReadBehind(102L)
-          reader.nextReadBehind(followFiles = false).map { _.id } mustEqual Some(103L)
-          reader.nextReadBehind(followFiles = false) mustEqual None
+          val scanner = new reader.Scanner(102L, followFiles = false)
+          assert(scanner.next().map { _.id } === Some(103L))
+          assert(scanner.next() === None)
           j.close()
         }
       }
 
-      "until it catches up" in {
+      it("until it catches up") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
         jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
         jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
@@ -205,27 +206,26 @@ class JournalReaderSpec extends Specification with TestLogging with TestFolder {
         reader.head = 100L
         reader.startReadBehind(100L)
 
-        reader.inReadBehind mustEqual true
-        reader.nextReadBehind().map { _.id } mustEqual Some(101L)
-        reader.inReadBehind mustEqual true
-        reader.nextReadBehind().map { _.id } mustEqual None
-        reader.inReadBehind mustEqual false
+        assert(reader.inReadBehind === true)
+        assert(reader.nextReadBehind().map { _.id } === Some(101L))
+        assert(reader.inReadBehind === true)
+        assert(reader.nextReadBehind().map { _.id } === None)
+        assert(reader.inReadBehind === false)
         j.close()
       }
     }
 
-    "fileInfosAfterReadBehind" in {
+    it("fileInfosAfter") {
       makeFiles()
       val j = makeJournal("test")
       val reader = j.reader("client")
       reader.head = 100L
       reader.startReadBehind(100L)
-      reader.nextReadBehind(followFiles = false).map { _.id } mustEqual Some(101L)
-      reader.nextReadBehind(followFiles = false) mustEqual None
-      reader.fileInfosAfterReadBehind.toList mustEqual List(
+      assert(j.fileInfosAfter(101L).toList === List(
         FileInfo(new File(testFolder, "test.2"), 102L, 103L, 2, 6),
         FileInfo(new File(testFolder, "test.3"), 104L, 105L, 2, 6)
-      )
+      ))
     }
+
   }
 }

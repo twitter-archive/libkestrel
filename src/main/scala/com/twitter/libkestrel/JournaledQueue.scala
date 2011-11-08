@@ -66,11 +66,11 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
   journal.foreach { j =>
     j.readerMap.foreach { case (name, _) => reader(name) }
   }
-  
+
   def reader(name: String) = {
-    readerMap.get("name").getOrElse {
+    readerMap.get(name).getOrElse {
       synchronized {
-        readerMap.get("name").getOrElse {
+        readerMap.get(name).getOrElse {
           val readerConfig = config.readerConfigs.get(name).getOrElse(config.defaultReaderConfig)
           val reader = new Reader(name, readerConfig)
           journal.foreach { j => reader.loadFromJournal(j.reader(name)) }
@@ -88,11 +88,11 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     if (readerMap.values.exists { r => !r.canPut }) return Future(false)
     journal.map { j =>
       j.put(data, addTime, expireTime).map { case (item, syncFuture) =>
-        
+
       }
     }.getOrElse {
       // no journal
-      
+
     }
   }
 */
@@ -119,32 +119,34 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     private[libkestrel] def loadFromJournal(j: Journal#Reader) {
       log.info("Replaying contents of %s+%s", config.name, name)
       j.readState()
-      if (j.head > 0 || true) {
-        j.startReadBehind(j.head)
-        var enterReadBehind = false
-        var optItem = j.nextReadBehind()
-        while (optItem.isDefined) {
-          val item = optItem.get
-          if (!enterReadBehind) {
-            queue.put(item)
-            memoryBytes += item.data.size
-          }
-          items += 1
-          bytes += item.data.size
-          if (bytes >= readerConfig.maxMemorySize.inBytes && !enterReadBehind) {
-            log.info("Staying in read-behind for queue '%s' (%s)", name, memoryBytes.bytes.toHuman())
-            enterReadBehind = true
-          }
-          optItem = j.nextReadBehind()
+      val scanner = new j.Scanner(j.head)
+
+      var inReadBehind = false
+      var lastId = 0L
+      var optItem = scanner.next()
+      while (optItem.isDefined) {
+        val item = optItem.get
+        lastId = item.id
+        if (!inReadBehind) {
+          queue.put(item)
+          memoryBytes += item.data.size
         }
-        if (enterReadBehind) {
-          // count items/bytes from remaining journals.
-          j.fileInfosAfterReadBehind.foreach { info =>
-            items += info.items
-            bytes += info.bytes
-          }
+        items += 1
+        bytes += item.data.size
+        if (bytes >= readerConfig.maxMemorySize.inBytes && !inReadBehind) {
+          j.startReadBehind(item.id)
+          inReadBehind = true
+        }
+        optItem = scanner.next()
+      }
+      if (inReadBehind) {
+        // count items/bytes from remaining journals.
+        journal.get.fileInfosAfter(lastId).foreach { info =>
+          items += info.items
+          bytes += info.bytes
         }
       }
+
       log.info("Replaying contents of %s+%s done: %d items, %s, %s in memory",
         config.name, name, items, bytes.bytes.toHuman, memoryBytes.bytes.toHuman)
     }
@@ -176,9 +178,9 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
             (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
           // FIXME remove.
         }
-      
-      
-        
+
+
+
               log.info("Entering read-behind for %s+%s", queueName, name)
 
       }
@@ -307,10 +309,10 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
  * - journal.add
  * - wake up any waiters
  *
-  
+
   def add(value: Array[Byte], expiry: Option[Time], xid: Option[Int]): Boolean = {
     val future = synchronized {
-      
+
             if (closed || value.size > config.maxItemSize.inBytes) return false
       if (config.fanoutOnly && !isFanout) return true
       while (queueLength >= config.maxItems || queueSize >= config.maxSize.inBytes) {

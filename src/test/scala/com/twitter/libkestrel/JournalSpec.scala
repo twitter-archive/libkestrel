@@ -24,7 +24,10 @@ import java.io._
 import java.nio.ByteBuffer
 import org.specs.Specification
 
-class JournalSpec extends Specification with TestLogging with TestFolder {
+import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
+
+class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
     new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue)
 
@@ -36,8 +39,8 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
     now
   }
 
-  "Journal" should {
-    "find reader/writer files" in {
+  describe("Journal") {
+    it("find reader/writer files") {
       Time.withCurrentTimeFrozen { timeMutator =>
         List(
           "test.read.client1", "test.read.client2", "test.read.client1~~", "test.readmenot",
@@ -54,31 +57,31 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
         }
 
         val j = makeJournal("test")
-        j.writerFiles().map { _.getName }.toSet mustEqual
-          Set("test.901", "test.8000", "test.1", "test.5005")
-        j.readerFiles().map { _.getName }.toSet mustEqual
-          Set("test.read.client1", "test.read.client2")
+        assert(j.writerFiles().map { _.getName }.toSet ===
+          Set("test.901", "test.8000", "test.1", "test.5005"))
+        assert(j.readerFiles().map { _.getName }.toSet ===
+          Set("test.read.client1", "test.read.client2"))
         j.close()
 
         new File(testFolder, "test.read.client1").delete()
         new File(testFolder, "test.read.client2").delete()
         val j2 = makeJournal("test")
-        j2.readerFiles().map { _.getName }.toSet mustEqual
-          Set("test.read.")
+        assert(j2.readerFiles().map { _.getName }.toSet ===
+          Set("test.read."))
         j2.close()
       }
     }
 
-    "erase old temporary files" in {
+    it("erase old temporary files") {
       List("test.1", "test.read.1", "test.read.1~~").foreach { name =>
         new File(testFolder, name).createNewFile()
       }
 
       val j = makeJournal("test")
-      new File(testFolder, "test.read.1~~").exists() mustEqual false
+      assert(!new File(testFolder, "test.read.1~~").exists)
     }
 
-    "erase all journal files" in {
+    it("erase all journal files") {
       List("test.1", "test.read.1", "test.read.1~~", "testbad").foreach { name =>
         new File(testFolder, name).createNewFile()
       }
@@ -86,10 +89,10 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
       val j = makeJournal("test")
       j.erase()
 
-      testFolder.list.toList mustEqual List("testbad")
+      assert(testFolder.list.toList === List("testbad"))
     }
 
-    "report size correctly" in {
+    it("report size correctly") {
       val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
       jf1.put(QueueItem(101L, Time.now, None, new Array[Byte](1000)))
       jf1.close()
@@ -98,11 +101,11 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
       jf2.close()
 
       val j = makeJournal("test")
-      j.journalSize mustEqual 2050L
+      assert(j.journalSize === 2050L)
     }
 
-    "fileForId" in {
-      "startup" in {
+    describe("fileForId") {
+      it("startup") {
         List(
           ("test.901", 901),
           ("test.8000", 8000),
@@ -115,17 +118,17 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
         }
 
         val j = makeJournal("test")
-        j.fileInfoForId(1) mustEqual Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(0) mustEqual None
-        j.fileInfoForId(555) mustEqual Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(900) mustEqual Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5))
-        j.fileInfoForId(901) mustEqual Some(FileInfo(new File(testFolder, "test.901"), 901, 901, 1, 5))
-        j.fileInfoForId(902) mustEqual Some(FileInfo(new File(testFolder, "test.901"), 901, 901, 1, 5))
-        j.fileInfoForId(6666) mustEqual Some(FileInfo(new File(testFolder, "test.5005"), 5005, 5005, 1, 5))
-        j.fileInfoForId(9999) mustEqual Some(FileInfo(new File(testFolder, "test.8000"), 8000, 8000, 1, 5))
+        assert(j.fileInfoForId(1) === Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5)))
+        assert(j.fileInfoForId(0) === None)
+        assert(j.fileInfoForId(555) === Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5)))
+        assert(j.fileInfoForId(900) === Some(FileInfo(new File(testFolder, "test.1"), 1, 1, 1, 5)))
+        assert(j.fileInfoForId(901) === Some(FileInfo(new File(testFolder, "test.901"), 901, 901, 1, 5)))
+        assert(j.fileInfoForId(902) === Some(FileInfo(new File(testFolder, "test.901"), 901, 901, 1, 5)))
+        assert(j.fileInfoForId(6666) === Some(FileInfo(new File(testFolder, "test.5005"), 5005, 5005, 1, 5)))
+        assert(j.fileInfoForId(9999) === Some(FileInfo(new File(testFolder, "test.8000"), 8000, 8000, 1, 5)))
       }
 
-      "during journal rotation" in {
+      it("during journal rotation") {
         Time.withCurrentTimeFrozen { timeMutator =>
           val j = makeJournal("test", 1.kilobyte)
           j.put(new Array[Byte](512), Time.now, None)
@@ -142,17 +145,17 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
           val file2 = new File(testFolder, "test." + 3.milliseconds.ago.inMilliseconds)
           val file3 = new File(testFolder, "test." + 1.millisecond.ago.inMilliseconds)
 
-          j.fileInfoForId(1) mustEqual Some(FileInfo(file1, 1, 2, 2, 1024))
-          j.fileInfoForId(2) mustEqual Some(FileInfo(file1, 1, 2, 2, 1024))
-          j.fileInfoForId(3) mustEqual Some(FileInfo(file2, 3, 4, 2, 1024))
-          j.fileInfoForId(4) mustEqual Some(FileInfo(file2, 3, 4, 2, 1024))
-          j.fileInfoForId(5) mustEqual Some(FileInfo(file3, 5, 0, 0, 0))
+          assert(j.fileInfoForId(1) === Some(FileInfo(file1, 1, 2, 2, 1024)))
+          assert(j.fileInfoForId(2) === Some(FileInfo(file1, 1, 2, 2, 1024)))
+          assert(j.fileInfoForId(3) === Some(FileInfo(file2, 3, 4, 2, 1024)))
+          assert(j.fileInfoForId(4) === Some(FileInfo(file2, 3, 4, 2, 1024)))
+          assert(j.fileInfoForId(5) === Some(FileInfo(file3, 5, 0, 0, 0)))
           j.close()
         }
       }
     }
 
-    "checkpoint readers" in {
+    it("checkpoint readers") {
       List("test.read.client1", "test.read.client2").foreach { name =>
         val jf = JournalFile.createReader(new File(testFolder, name), null, Duration.MaxValue)
         jf.readHead(100L)
@@ -170,18 +173,18 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
       j.checkpoint()
       j.close()
 
-      JournalFile.openReader(new File(testFolder, "test.read.client1"), null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(new File(testFolder, "test.read.client1"), null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(102L),
         JournalFile.Record.ReadDone(Array[Long]())
-      )
+      ))
 
-      JournalFile.openReader(new File(testFolder, "test.read.client2"), null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(new File(testFolder, "test.read.client2"), null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(100L),
         JournalFile.Record.ReadDone(Array(102L, 103L))
-      )
+      ))
     }
 
-    "make new reader" in {
+    it("make new reader") {
       val j = makeJournal("test")
       var r = j.reader("new")
       r.head = 100L
@@ -189,48 +192,48 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
       r.checkpoint()
       j.close()
 
-      JournalFile.openReader(new File(testFolder, "test.read.new"), null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(new File(testFolder, "test.read.new"), null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(101L),
         JournalFile.Record.ReadDone(Array[Long]())
-      )
+      ))
     }
 
-    "create a default reader when no others exist" in {
+    it("create a default reader when no others exist") {
       val j = makeJournal("test")
       j.close()
 
-      JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(0L),
         JournalFile.Record.ReadDone(Array[Long]())
-      )
+      ))
     }
 
-    "convert the default reader to a named reader when one is created" in {
+    it("convert the default reader to a named reader when one is created") {
       val j = makeJournal("test")
       val reader = j.reader("")
       reader.head = 100L
       reader.checkpoint()
 
-      new File(testFolder, "test.read.").exists mustEqual true
+      assert(new File(testFolder, "test.read.").exists)
 
       j.reader("hello")
-      new File(testFolder, "test.read.").exists mustEqual false
-      new File(testFolder, "test.read.hello").exists mustEqual true
+      assert(!new File(testFolder, "test.read.").exists)
+      assert(new File(testFolder, "test.read.hello").exists)
 
-      JournalFile.openReader(new File(testFolder, "test.read.hello"), null, Duration.MaxValue).toList mustEqual List(
+      assert(JournalFile.openReader(new File(testFolder, "test.read.hello"), null, Duration.MaxValue).toList === List(
         JournalFile.Record.ReadHead(100L),
         JournalFile.Record.ReadDone(Array[Long]())
-      )
+      ))
     }
 
-    "recover a reader" in {
+    describe("recover a reader") {
       /*
        * rationale:
        * this can happen if a write journal is corrupted/truncated, losing the last few items, and
        * a reader had already written a state file out claiming to have finished processing the
        * items that are now lost.
        */
-      "with a head id in the future" in {
+      it("with a head id in the future") {
         // create main journal
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
         jf1.put(QueueItem(390L, Time.now, None, "hi".getBytes))
@@ -248,14 +251,14 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
 
         val j = makeJournal("test")
         val r1 = j.reader("1")
-        r1.head mustEqual 400L
-        r1.doneSet mustEqual Set()
+        assert(r1.head === 400L)
+        assert(r1.doneSet === Set())
         val r2 = j.reader("2")
-        r2.head mustEqual 390L
-        r2.doneSet mustEqual Set(395L)
+        assert(r2.head === 390L)
+        assert(r2.doneSet === Set(395L))
       }
 
-      "with a head id that doesn't exist anymore" in {
+      it("with a head id that doesn't exist anymore") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
         jf1.put(QueueItem(800L, Time.now, None, "hi".getBytes))
         jf1.close()
@@ -265,27 +268,27 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
         jf2.close()
 
         val j = makeJournal("test")
-        j.reader("1").head mustEqual 799L
+        assert(j.reader("1").head === 799L)
       }
     }
 
-    "start with an empty journal" in {
+    it("start with an empty journal") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val j = makeJournal("test")
         val (item, future) = j.put("hi".getBytes, Time.now, None)()
-        item.id mustEqual 1L
+        assert(item.id === 1L)
         j.close()
 
         val file = new File(testFolder, "test." + Time.now.inMilliseconds)
         val jf = JournalFile.openWriter(file, null, Duration.MaxValue)
-        jf.readNext() mustEqual
-          Some(JournalFile.Record.Put(QueueItem(1L, roundedTime, None, "hi".getBytes)))
+        assert(jf.readNext() ===
+          Some(JournalFile.Record.Put(QueueItem(1L, roundedTime, None, "hi".getBytes))))
         jf.close()
       }
     }
 
-    "append new items to the end of the last journal" in {
+    it("append new items to the end of the last journal") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val file1 = new File(testFolder, "test.1")
@@ -299,20 +302,20 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
 
         val j = makeJournal("test")
         val (item, future) = j.put("hi".getBytes, Time.now, None)()
-        item.id mustEqual 103L
+        assert(item.id === 103L)
         j.close()
 
         val jf3 = JournalFile.openWriter(file2, null, Duration.MaxValue)
-        jf3.readNext() mustEqual
-          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "102".getBytes)))
-        jf3.readNext() mustEqual
-          Some(JournalFile.Record.Put(QueueItem(103L, roundedTime, None, "hi".getBytes)))
-        jf3.readNext() mustEqual None
+        assert(jf3.readNext() ===
+          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "102".getBytes))))
+        assert(jf3.readNext() ===
+          Some(JournalFile.Record.Put(QueueItem(103L, roundedTime, None, "hi".getBytes))))
+        assert(jf3.readNext() === None)
         jf3.close()
       }
     }
 
-    "truncate corrupted journal" in {
+    it("truncate corrupted journal") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
 
@@ -329,20 +332,20 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
 
         val j = makeJournal("test")
         val (item, future) = j.put("hi".getBytes, Time.now, None)()
-        item.id mustEqual 102L
+        assert(item.id === 102L)
         j.close()
 
         val jf2 = JournalFile.openWriter(file, null, Duration.MaxValue)
-        jf2.readNext() mustEqual
-          Some(JournalFile.Record.Put(QueueItem(101L, roundedTime, None, "101".getBytes)))
-        jf2.readNext() mustEqual
-          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "hi".getBytes)))
-        jf2.readNext() mustEqual None
+        assert(jf2.readNext() ===
+          Some(JournalFile.Record.Put(QueueItem(101L, roundedTime, None, "101".getBytes))))
+        assert(jf2.readNext() ===
+          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "hi".getBytes))))
+        assert(jf2.readNext() === None)
         jf2.close()
       }
     }
 
-    "rotate journal files" in {
+    it("rotate journal files") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val j = makeJournal("test", 1.kilobyte)
 
@@ -356,19 +359,19 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
         val file1 = new File(testFolder, "test." + time1)
         val file2 = new File(testFolder, "test." + time2)
         val defaultReader = new File(testFolder, "test.read.")
-        testFolder.list.toList mustEqual List(file1, file2, defaultReader).map { _.getName() }
-        JournalFile.openWriter(file1, null, Duration.MaxValue).toList mustEqual List(
+        assert(testFolder.list.toList === List(file1, file2, defaultReader).map { _.getName() })
+        assert(JournalFile.openWriter(file1, null, Duration.MaxValue).toList === List(
           JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
           JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
-        )
-        JournalFile.openWriter(file2, null, Duration.MaxValue).toList mustEqual List(
+        ))
+        assert(JournalFile.openWriter(file2, null, Duration.MaxValue).toList === List(
           JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, new Array[Byte](512)))
-        )
+        ))
       }
     }
 
-    "clean up any dead files behind it" in {
-      "when a client catches up" in {
+    describe("clean up any dead files behind it") {
+      it("when a client catches up") {
         Time.withCurrentTimeFrozen { timeMutator =>
           val j = makeJournal("test", 1.kilobyte)
           val reader = j.reader("client")
@@ -380,21 +383,21 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
           val time3 = addItem(j, 512)
           timeMutator.advance(1.millisecond)
 
-          new File(testFolder, "test." + time1).exists mustEqual true
-          new File(testFolder, "test." + time2).exists mustEqual true
+          assert(new File(testFolder, "test." + time1).exists)
+          assert(new File(testFolder, "test." + time2).exists)
 
           reader.commit(1L)
           reader.commit(2L)
           j.checkpoint()
 
-          new File(testFolder, "test." + time1).exists mustEqual false
-          new File(testFolder, "test." + time2).exists mustEqual true
+          assert(!new File(testFolder, "test." + time1).exists)
+          assert(new File(testFolder, "test." + time2).exists)
 
           j.close()
         }
       }
 
-      "when the journal moves to a new file" in {
+      it("when the journal moves to a new file") {
         Time.withCurrentTimeFrozen { timeMutator =>
           val j = makeJournal("test", 1.kilobyte)
           val reader = j.reader("client")
@@ -409,16 +412,16 @@ class JournalSpec extends Specification with TestLogging with TestFolder {
           reader.commit(2L)
           reader.checkpoint()
 
-          new File(testFolder, "test." + time0).exists mustEqual true
-          new File(testFolder, "test." + time2).exists mustEqual true
+          assert(new File(testFolder, "test." + time0).exists)
+          assert(new File(testFolder, "test." + time2).exists)
 
           val time3 = addItem(j, 512)
           timeMutator.advance(1.millisecond)
           val time4 = addItem(j, 512)
 
-          new File(testFolder, "test." + time0).exists mustEqual false
-          new File(testFolder, "test." + time2).exists mustEqual true
-          new File(testFolder, "test." + time4).exists mustEqual true
+          assert(!new File(testFolder, "test." + time0).exists)
+          assert(new File(testFolder, "test." + time2).exists)
+          assert(new File(testFolder, "test." + time4).exists)
         }
       }
     }

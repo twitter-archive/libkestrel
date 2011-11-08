@@ -18,14 +18,33 @@ package com.twitter.libkestrel
 
 import com.twitter.conversions.storage._
 import com.twitter.conversions.time._
-import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
 import java.nio.{ByteBuffer, ByteOrder}
-import org.specs.Specification
-import org.specs.matcher.Matcher
+import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-trait Argh { self: Specification =>
+trait TempFolder extends AbstractSuite { self: Suite =>
+  import com.twitter.io.Files
+
+  var testFolder: File = _
+
+  abstract override def withFixture(test: NoArgTest) {
+    val tempFolder = System.getProperty("java.io.tmpdir")
+    var folder: File = null
+    do {
+      folder = new File(tempFolder, "scala-test-" + System.currentTimeMillis)
+    } while (! folder.mkdir)
+    testFolder = folder
+    try {
+      super.withFixture(test)
+    } finally {
+      Files.delete(testFolder)
+    }
+  }
+}
+
+trait TestLogging2 extends AbstractSuite { self: Suite =>
   import com.twitter.logging._
   import java.util.{logging => jlogging}
 
@@ -34,31 +53,32 @@ trait Argh { self: Specification =>
   private val rootLog = Logger.get("")
   private var oldLevel: jlogging.Level = _
 
-  doBeforeSpec {
+  abstract override def withFixture(test: NoArgTest) {
     oldLevel = rootLog.getLevel()
     rootLog.setLevel(logLevel)
     rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
-  }
-
-  doAfterSpec {
-    rootLog.clearHandlers()
-    rootLog.setLevel(oldLevel)
+    try {
+      super.withFixture(test)
+    } finally {
+      rootLog.clearHandlers()
+      rootLog.setLevel(oldLevel)
+    }
   }
 }
 
-class JournaledQueueSpec extends Specification with Argh with TestFolder {
+class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
   val READER_CONFIG = new JournaledQueueReaderConfig()
   val CONFIG = new JournaledQueueConfig(name = "test")
 
-  case class haveId(id: Long) extends Matcher[Array[Byte]]() {
-    def apply(data: => Array[Byte]) = (
+  def haveId(id: Long) = new Matcher[Array[Byte]]() {
+    def apply(data: Array[Byte]) = MatchResult(
       {
         val buffer = ByteBuffer.wrap(data)
         buffer.order(ByteOrder.BIG_ENDIAN)
         buffer.getLong() == id
       },
-      "data matches id " + id,
-      "data doesn't match id " + id
+      "data " + data.toList + " doesn't match id " + id,
+      "data " + data.toList + " matches id " + id
     )
   }
 
@@ -85,60 +105,67 @@ class JournaledQueueSpec extends Specification with Argh with TestFolder {
     jf.close()
   }
 
-  "JournaledQueue" should {
-    "create" in {
+  describe("JournaledQueue") {
+    it("can be created") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val q = new JournaledQueue(CONFIG, testFolder, null)
         val reader = q.reader("")
-        new File(testFolder, "test." + Time.now.inMilliseconds).exists mustEqual true
+        assert(new File(testFolder, "test." + Time.now.inMilliseconds).exists)
         reader.checkpoint()
-        new File(testFolder, "test.read.").exists mustEqual true
+        assert(new File(testFolder, "test.read.").exists)
       }
     }
 
-    "read existing journals" in {
-      "small" in {
+    describe("can read existing journals") {
+      it("small") {
         setupWriteJournals(4, 2)
         setupReadJournal("", 3L)
         val q = new JournaledQueue(CONFIG, testFolder, null)
         val reader = q.reader("")
 
-        reader.items mustEqual 5
-        reader.bytes mustEqual 5 * 1024
-        reader.memoryBytes mustEqual 5 * 1024
+        assert(reader.items === 5)
+        assert(reader.bytes === 5 * 1024)
+        assert(reader.memoryBytes === 5 * 1024)
         val item = reader.get(None)()
-        item must beSome[QueueItem].which { item =>
-          item.data must haveId(4L)
-          item.id mustEqual 4L
-        }
+        assert(item.isDefined)
+        item.get.data should haveId(4L)
+        assert(item.get.id === 4L)
       }
 
-      "in read-behind" in {
+      it("in read-behind") {
         setupWriteJournals(4, 2)
-        (0L to 3L).foreach { readId =>
+        (0L to 4L).foreach { readId =>
           setupReadJournal("", readId)
           val readerConfig = READER_CONFIG.copy(maxMemorySize = 4.kilobytes)
           val q = new JournaledQueue(CONFIG.copy(defaultReaderConfig = readerConfig), testFolder, null)
           val reader = q.reader("")
 
-          reader.items mustEqual (8 - readId)
-          reader.bytes mustEqual ((8 - readId) * 1024)
-          reader.memoryBytes mustEqual (4 * 1024)
+          assert(reader.items === 8 - readId)
+          assert(reader.bytes === (8 - readId) * 1024)
+          assert(reader.memoryBytes === 4 * 1024)
         }
       }
 
-      "with a caught-up reader" in {
+      it("with a caught-up reader") {
         setupWriteJournals(4, 2)
         setupReadJournal("", 8L)
         val q = new JournaledQueue(CONFIG, testFolder, null)
         val reader = q.reader("")
 
-        reader.items mustEqual 0
-        reader.bytes mustEqual 0L
-        reader.memoryBytes mustEqual 0L
-        reader.get(None)() mustEqual None
+        assert(reader.items === 0)
+        assert(reader.bytes === 0L)
+        assert(reader.memoryBytes === 0L)
+        assert(reader.get(None)() == None)
       }
     }
+  }
+}
+
+/*
+
+
+class JournaledQueueSpec extends Specification with Argh with TestFolder {
+  "JournaledQueue" should {
 
     "exist without a journal" in {
       val q = new JournaledQueue(CONFIG.copy(journaled = false), testFolder, null)
@@ -148,3 +175,4 @@ class JournaledQueueSpec extends Specification with Argh with TestFolder {
     }
   }
 }
+*/
