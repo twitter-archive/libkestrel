@@ -3,6 +3,7 @@ package com.twitter.libkestrel
 import com.twitter.util._
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import java.util.concurrent.atomic.AtomicInteger
+import scala.collection.JavaConverters._
 
 object ConcurrentBlockingQueue {
   /** What to do when the queue is full and a `put` is attempted (for the constructor). */
@@ -54,20 +55,49 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   private[this] val queue = new ConcurrentLinkedQueue[A]
 
   /**
-   * A queue of readers waiting to retrieve an item.
-   * `waiters` tracks the order for fairness, but `waiterSet` is the definitive set: a waiter may
-   * be in the queue but not in the set, which just means that they had a timeout set, and gave up.
+   * A queue of readers, some waiting with a timeout, others polling.
+   * `consumers` tracks the order or fairness, but `waiterSet` and `pollerSet` are
+   * the definitive sets: a waiter/poller may be the queue, but not in the set, which
+   * just means that they had a timeout set and gave up or were rejected due to an
+   * empty queue.
    */
-  case class Waiter(timerTask: Option[TimerTask], promise: Promise[Option[A]])
-  private[this] val waiters = new ConcurrentLinkedQueue[Waiter]
+  abstract sealed class Consumer {
+    def promise: Promise[Option[A]]
+    def apply(item: A): Boolean
+  }
+  private[this] val consumers = new ConcurrentLinkedQueue[Consumer]
+
+  /**
+   * A queue of readers waiting to retrieve an item. See `consumers`
+   */
+  case class Waiter(promise: Promise[Option[A]], timerTask: Option[TimerTask])
+  extends Consumer {
+    def apply(item: A) = {
+      timerTask.foreach { _.cancel() }
+      promise.setValue(Some(item))
+      true
+    }
+  }
   private[this] val waiterSet = new ConcurrentHashMap[Promise[Option[A]], Promise[Option[A]]]
 
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
+   * See `consumer`
    */
   case class Poller(promise: Promise[Option[A]], predicate: A => Boolean)
+  extends Consumer {
+    def apply(item: A) = {
+      if (predicate(item)) {
+        promise.setValue(Some(item))
+        true
+      } else {
+        promise.setValue(None)
+        false
+      }
+    }
+  }
   private[this] val truth: A => Boolean = { _ => true }
-  private[this] val pollers = new ConcurrentLinkedQueue[Poller]
+  private[this] val pollerSet = new ConcurrentHashMap[Promise[Option[A]], Promise[Option[A]]]
 
   /**
    * An estimate of the queue size, tracked for each put/get.
@@ -123,7 +153,8 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       None
     } else {
       val promise = new Promise[Option[A]]
-      pollers.add(Poller(promise, predicate))
+      pollerSet.put(promise, promise)
+      consumers.add(Poller(promise, predicate))
       handoff()
       promise()
     }
@@ -139,13 +170,13 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
         }
       }
     }
-    waiters.add(Waiter(timerTask, promise))
+    consumers.add(Waiter(promise, timerTask))
     if (!queue.isEmpty) handoff()
     promise
   }
 
   /**
-   * This is the only code path allowed to remove an item from `queue` or `waiters`.
+   * This is the only code path allowed to remove an item from `queue` or `consumers`.
    */
   private def handoff() {
     if (triggerLock.getAndIncrement() == 0) {
@@ -166,35 +197,38 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       }
     }
 
-    // FIXME: alternate which is checked first.
-    var poller = pollers.poll()
-    if (poller ne null) {
-      val item = queue.peek()
-      if ((item ne null) && poller.predicate(item)) {
-        poller.promise.setValue(Some(item))
+    val item = queue.peek()
+    if (item ne null) {
+      var consumer: Consumer = null
+      var invalid = true
+      do {
+        consumer = consumers.poll()
+        invalid = (consumer eq null) || { consumer match {
+          case Waiter(promise, _) => waiterSet.remove(promise) eq null
+          case Poller(promise, _) => pollerSet.remove(promise) eq null
+        } }
+      } while((consumer ne null) && invalid)
+
+      if ((consumer ne null) && consumer(item)) {
         queue.poll()
-        elementCount.decrementAndGet()
-      } else {
-        poller.promise.setValue(None)
+        if (elementCount.decrementAndGet() == 0) {
+          dumpPollerSet
+        }
       }
     } else {
-      val item = queue.peek()
-      if (item ne null) {
-        var waiter = waiters.poll()
-        while ((waiter ne null) && (waiterSet.remove(waiter.promise) eq null)) {
-          waiter = waiters.poll()
-        }
-        if (waiter ne null) {
-          waiter.timerTask.foreach { _.cancel() }
-          waiter.promise.setValue(Some(item))
-          queue.poll()
-          elementCount.decrementAndGet()
-        }
-      }
+      // empty -- dump outstanding pollers
+      dumpPollerSet
+    }
+  }
+
+  private[this] def dumpPollerSet = {
+    pollerSet.keySet.asScala.toArray.foreach { poller =>
+      poller.setValue(None)
+      pollerSet.remove(poller)
     }
   }
 
   def toDebug: String = {
-    "<ConcurrentBlockingQueue size=%d waiters=%d/%d>".format(elementCount.get, waiters.size, waiterSet.size)
+    "<ConcurrentBlockingQueue size=%d waiters=%d/%d/%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
   }
 }
