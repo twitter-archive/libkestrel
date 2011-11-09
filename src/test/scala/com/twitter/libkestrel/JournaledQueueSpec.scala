@@ -70,6 +70,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   val READER_CONFIG = new JournaledQueueReaderConfig()
   val CONFIG = new JournaledQueueConfig(name = "test")
 
+  val timer = new JavaTimer(isDaemon = true)
+
   def haveId(id: Long) = new Matcher[Array[Byte]]() {
     def apply(data: Array[Byte]) = MatchResult(
       {
@@ -200,6 +202,61 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(reader.items === 0)
       assert(reader.bytes === 0)
       assert(reader.memoryBytes === 0)
+    }
+
+    it("tracks open reads") {
+      setupWriteJournals(4, 1)
+      setupReadJournal("", 3)
+      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val reader = q.reader("")
+
+      val item = reader.get(None)()
+      assert(item.isDefined)
+      assert(item.get.id === 4L)
+      assert(reader.get(None)() === None)
+
+      assert(reader.items === 1)
+      assert(reader.bytes === 1024L)
+      assert(reader.openItems === 1)
+      assert(reader.openBytes === 1024L)
+
+      reader.unget(item.get.id)
+      assert(reader.items === 1)
+      assert(reader.bytes === 1024L)
+      assert(reader.openItems === 0)
+      assert(reader.openBytes === 0L)
+    }
+
+    it("gives returned items to the next reader") {
+      setupWriteJournals(4, 1)
+      setupReadJournal("", 3)
+      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val reader = q.reader("")
+
+      val item = reader.get(None)()
+      assert(item.isDefined)
+      assert(item.get.id === 4L)
+      assert(reader.get(None)() === None)
+
+      val future = reader.get(Some(1.second.fromNow))
+      reader.unget(item.get.id)
+      assert(future.isDefined)
+      assert(future().get.id === 4L)
+    }
+
+    it("peek") {
+      setupWriteJournals(4, 1)
+      setupReadJournal("", 0)
+      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val reader = q.reader("")
+
+      val item = reader.peek()()
+      assert(item.isDefined)
+      assert(item.get.id === 1L)
+
+      val item2 = reader.get(None)()
+      assert(item2.isDefined)
+      assert(item2.get.id === 1L)
     }
   }
 }

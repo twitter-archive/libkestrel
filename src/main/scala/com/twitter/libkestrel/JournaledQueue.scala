@@ -24,6 +24,7 @@ import com.twitter.util._
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection.immutable
+import scala.collection.JavaConverters._
 
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
@@ -106,7 +107,11 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
 
-    private val openTransactions = new ConcurrentHashMap[Long, QueueItem]()
+    private val openReads = new ConcurrentHashMap[Long, QueueItem]()
+
+    // visibility into how many items (and bytes) are in open reads
+    def openItems = openReads.values.size
+    def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.data.size }
 
     /*
      * in order to reload the contents of a queue at startup, we need to:
@@ -139,6 +144,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
         }
         optItem = scanner.next()
       }
+      scanner.end()
       if (inReadBehind) {
         // count items/bytes from remaining journals.
         journal.get.fileInfosAfter(lastId).foreach { info =>
@@ -264,7 +270,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
               get(deadline)
             } else {
               age = Time.now - item.addTime
-              openTransactions.put(item.id, item)
+              openReads.put(item.id, item)
               Future.value(s)
             }
           }
@@ -278,7 +284,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
      */
     def commit(id: Long) {
       if (closed) return
-      val item = openTransactions.remove(id)
+      val item = openReads.remove(id)
       if (item eq null) {
         log.error("Tried to commit unknown item %d on %s+%s", id, config.name, name)
         return
@@ -291,6 +297,30 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
         memoryBytes -= item.data.size
         fillReadBehind()
       }
+    }
+
+    /**
+     * Return an uncommited "get" to the head of the queue and give it to someone else.
+     */
+    def unget(id: Long) {
+      if (closed) return
+      val item = openReads.remove(id)
+      if (item eq null) {
+        log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
+        return
+      }
+      queue.putHead(item)
+    }
+
+    /**
+     * Peek at the head item in the queue, if there is one.
+     */
+    def peek(): Future[Option[QueueItem]] = {
+      val future = get(None)
+      future.map { optItem =>
+        if (optItem.isDefined) unget(optItem.get.id)
+      }
+      future
     }
   }
 
