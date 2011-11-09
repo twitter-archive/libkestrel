@@ -116,6 +116,15 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       }
     }
 
+    it("starts new readers at the end of the queue") {
+      setupWriteJournals(4, 2)
+      val q = new JournaledQueue(CONFIG, testFolder, null)
+      val reader = q.reader("")
+      assert(reader.items === 0)
+      assert(reader.bytes === 0)
+      assert(reader.memoryBytes === 0)
+    }
+
     describe("can read existing journals") {
       it("small") {
         setupWriteJournals(4, 2)
@@ -157,6 +166,40 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(reader.memoryBytes === 0L)
         assert(reader.get(None)() == None)
       }
+    }
+
+    it("fills read-behind as items are removed") {
+      setupWriteJournals(4, 2)
+      setupReadJournal("", 0)
+      val readerConfig = READER_CONFIG.copy(maxMemorySize = 4.kilobytes)
+      val q = new JournaledQueue(CONFIG.copy(defaultReaderConfig = readerConfig), testFolder, null)
+      val reader = q.reader("")
+
+      assert(reader.items === 8)
+      assert(reader.bytes === 8 * 1024)
+      assert(reader.memoryBytes === 4 * 1024)
+
+      (1L to 8L).foreach { id =>
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        item.get.data should haveId(id)
+        assert(item.get.id == id)
+
+        assert(reader.items === 8 - id + 1)
+        assert(reader.bytes === (8 - id + 1) * 1024)
+        assert(reader.memoryBytes === ((8 - id + 1) min 4) * 1024)
+
+        reader.commit(item.get.id)
+
+        assert(reader.items === 8 - id)
+        assert(reader.bytes === (8 - id) * 1024)
+        assert(reader.memoryBytes === ((8 - id) min 4) * 1024)
+      }
+
+      assert(reader.get(None)() === None)
+      assert(reader.items === 0)
+      assert(reader.bytes === 0)
+      assert(reader.memoryBytes === 0)
     }
   }
 }
