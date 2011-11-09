@@ -6,7 +6,7 @@ import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import scala.collection.mutable
 
-class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
+class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
   implicit val javaTimer: Timer = new JavaTimer()
 
   trait QueueBuilder {

@@ -18,14 +18,13 @@ package com.twitter.libkestrel
 
 import com.twitter.conversions.storage._
 import com.twitter.conversions.time._
-import com.twitter.logging.TestLogging
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
+class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
     new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue)
 

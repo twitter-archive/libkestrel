@@ -24,49 +24,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-trait TempFolder extends AbstractSuite { self: Suite =>
-  import com.twitter.io.Files
-
-  var testFolder: File = _
-
-  abstract override def withFixture(test: NoArgTest) {
-    val tempFolder = System.getProperty("java.io.tmpdir")
-    var folder: File = null
-    do {
-      folder = new File(tempFolder, "scala-test-" + System.currentTimeMillis)
-    } while (! folder.mkdir)
-    testFolder = folder
-    try {
-      super.withFixture(test)
-    } finally {
-      Files.delete(testFolder)
-    }
-  }
-}
-
-trait TestLogging2 extends AbstractSuite { self: Suite =>
-  import com.twitter.logging._
-  import java.util.{logging => jlogging}
-
-  val logLevel = Logger.levelNames(Option[String](System.getenv("log")).getOrElse("FATAL").toUpperCase)
-
-  private val rootLog = Logger.get("")
-  private var oldLevel: jlogging.Level = _
-
-  abstract override def withFixture(test: NoArgTest) {
-    oldLevel = rootLog.getLevel()
-    rootLog.setLevel(logLevel)
-    rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
-    try {
-      super.withFixture(test)
-    } finally {
-      rootLog.clearHandlers()
-      rootLog.setLevel(oldLevel)
-    }
-  }
-}
-
-class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
+class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
   val READER_CONFIG = new JournaledQueueReaderConfig()
   val CONFIG = new JournaledQueueConfig(name = "test")
 
