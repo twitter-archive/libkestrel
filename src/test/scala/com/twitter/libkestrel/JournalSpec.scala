@@ -21,8 +21,6 @@ import com.twitter.conversions.time._
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
-import org.specs.Specification
-
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 

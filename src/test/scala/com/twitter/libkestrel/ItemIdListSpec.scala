@@ -16,49 +16,50 @@
 
 package com.twitter.libkestrel
 
-import org.specs.Specification
+import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class ItemIdListSpec extends Specification {
-  "ItemIdList" should {
-    "add and pop" in {
+class ItemIdListSpec extends Spec {
+  describe("ItemIdList") {
+    it("add and pop") {
       val x = new ItemIdList()
       x.add(Seq(5L, 4L))
-      x.size mustEqual 2
-      x.pop() mustEqual Some(5L)
-      x.pop() mustEqual Some(4L)
-      x.pop() mustEqual None
+      assert(x.size === 2)
+      assert(x.pop() === Some(5L))
+      assert(x.pop() === Some(4L))
+      assert(x.pop() === None)
     }
 
-    "remove from the middle" in {
+    it("remove from the middle") {
       val x = new ItemIdList()
       x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      x.pop() mustEqual Some(7L)
-      x.remove(Set(5L, 4L, 2L)) mustEqual Set(5L, 4L, 2L)
-      x.popAll() mustEqual Seq(6L, 3L)
+      assert(x.pop() === Some(7L))
+      assert(x.remove(Set(5L, 4L, 2L)) === Set(5L, 4L, 2L))
+      assert(x.popAll() === Seq(6L, 3L))
     }
 
-    "remove and pop combined" in {
+    it("remove and pop combined") {
       val x = new ItemIdList()
       x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      x.remove(Set(6L)) mustEqual Set(6L)
-      x.pop() mustEqual Some(7L)
-      x.pop() mustEqual Some(5L)
-      x.popAll() mustEqual Seq(4L, 3L, 2L)
+      assert(x.remove(Set(6L)) === Set(6L))
+      assert(x.pop() === Some(7L))
+      assert(x.pop() === Some(5L))
+      assert(x.popAll() === Seq(4L, 3L, 2L))
     }
 
-    "remove individually" in {
+    it("remove individually") {
       val x = new ItemIdList()
       x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      x.remove(6L) mustEqual true
-      x.remove(4L) mustEqual true
-      x.remove(4L) mustEqual false
-      x.size mustEqual 4
-      x.toSeq.toList mustEqual List(7L, 5L, 3L, 2L)
+      assert(x.remove(6L) === true)
+      assert(x.remove(4L) === true)
+      assert(x.remove(4L) === false)
+      assert(x.size === 4)
+      assert(x.toSeq.toList === List(7L, 5L, 3L, 2L))
 
-      x.remove(5L) mustEqual true
-      x.remove(7L) mustEqual true
-      x.size mustEqual 2
-      x.toSeq.toList mustEqual List(3L, 2L)
+      assert(x.remove(5L) === true)
+      assert(x.remove(7L) === true)
+      assert(x.size === 2)
+      assert(x.toSeq.toList === List(3L, 2L))
     }
   }
 }
