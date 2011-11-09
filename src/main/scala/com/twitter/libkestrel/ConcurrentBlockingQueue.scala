@@ -56,7 +56,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
 
   /**
    * A queue of readers, some waiting with a timeout, others polling.
-   * `consumers` tracks the order or fairness, but `waiterSet` and `pollerSet` are
+   * `consumers` tracks the order for fairness, but `waiterSet` and `pollerSet` are
    * the definitive sets: a waiter/poller may be the queue, but not in the set, which
    * just means that they had a timeout set and gave up or were rejected due to an
    * empty queue.
@@ -68,10 +68,9 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   private[this] val consumers = new ConcurrentLinkedQueue[Consumer]
 
   /**
-   * A queue of readers waiting to retrieve an item. See `consumers`
+   * A queue of readers waiting to retrieve an item. See `consumers`.
    */
-  case class Waiter(promise: Promise[Option[A]], timerTask: Option[TimerTask])
-  extends Consumer {
+  case class Waiter(promise: Promise[Option[A]], timerTask: Option[TimerTask]) extends Consumer {
     def apply(item: A) = {
       timerTask.foreach { _.cancel() }
       promise.setValue(Some(item))
@@ -82,10 +81,9 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
 
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
-   * See `consumer`
+   * See `consumers`.
    */
-  case class Poller(promise: Promise[Option[A]], predicate: A => Boolean)
-  extends Consumer {
+  case class Poller(promise: Promise[Option[A]], predicate: A => Boolean) extends Consumer {
     def apply(item: A) = {
       if (predicate(item)) {
         promise.setValue(Some(item))
@@ -178,7 +176,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * This is the only code path allowed to remove an item from `queue` or `consumers`.
    */
-  private def handoff() {
+  private[this] def handoff() {
     if (triggerLock.getAndIncrement() == 0) {
       do {
         handoffOne()
@@ -186,7 +184,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
-  private def handoffOne() {
+  private[this] def handoffOne() {
     if (fullPolicy == FullPolicy.DropOldest) {
       // make sure we aren't over the max queue size.
       while (elementCount.get > maxItems) {
@@ -203,11 +201,12 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       var invalid = true
       do {
         consumer = consumers.poll()
-        invalid = (consumer eq null) || { consumer match {
+        invalid = consumer match {
+          case null => false
           case Waiter(promise, _) => waiterSet.remove(promise) eq null
           case Poller(promise, _) => pollerSet.remove(promise) eq null
-        } }
-      } while((consumer ne null) && invalid)
+        }
+      } while (invalid)
 
       if ((consumer ne null) && consumer(item)) {
         queue.poll()
