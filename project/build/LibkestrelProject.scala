@@ -16,8 +16,8 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   with PublishSourcesAndJavadocs
   with PublishSite
 {
-  val util_core = "com.twitter" % "util-core" % "1.12.3-SNAPSHOT"
-  val util_logging = "com.twitter" % "util-logging" % "1.12.2"
+  val util_core = "com.twitter" % "util-core" % "1.12.3"
+  val util_logging = "com.twitter" % "util-logging" % "1.12.3"
 
   // for tests
   val specs = "org.scala-tools.testing" % "specs_2.8.1" % "1.6.7" % "test" withSources()
