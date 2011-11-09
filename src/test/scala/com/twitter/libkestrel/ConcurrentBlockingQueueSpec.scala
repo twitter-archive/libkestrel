@@ -1,13 +1,12 @@
 package com.twitter.libkestrel
 
-import scala.collection.mutable
-import org.specs.Specification
 import com.twitter.conversions.time._
 import com.twitter.util._
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
+import scala.collection.mutable
 
-class ConcurrentBlockingQueue2Spec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
+class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging2 {
   implicit val javaTimer: Timer = new JavaTimer()
 
   trait QueueBuilder {
@@ -65,6 +64,19 @@ class ConcurrentBlockingQueue2Spec extends Spec with ShouldMatchers with TempFol
       assert(queue.pollIf(_ contains "t") === None)
     }
 
+    it("putHead") {
+      val queue = newQueue()
+      assert(queue.size === 0)
+      assert(queue.put("hi"))
+      assert(queue.size === 1)
+      queue.putHead("bye")
+      assert(queue.size === 2)
+      assert(queue.get()() == Some("bye"))
+      assert(queue.size === 1)
+      assert(queue.get()() == Some("hi"))
+      assert(queue.size === 0)
+    }
+
     describe("honor the max size") {
       it("by refusing new puts") {
         val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)
@@ -98,7 +110,9 @@ class ConcurrentBlockingQueue2Spec extends Spec with ShouldMatchers with TempFol
       val futures = (0 until 10).map { i => queue.get() }.toList
       futures.foreach { f => assert(!f.isDefined) }
 
-      (0 until 10).foreach { i => queue.put(i.toString) }
+      (0 until 10).foreach { i =>
+        if (i % 2 == 0) queue.put(i.toString) else queue.putHead(i.toString)
+      }
       (0 until 10).foreach { i =>
         assert(futures(i).isDefined)
         assert(futures(i)() === Some(i.toString))
@@ -174,7 +188,7 @@ class ConcurrentBlockingQueue2Spec extends Spec with ShouldMatchers with TempFol
     tests(new QueueBuilder {
       def newQueue() = SimpleBlockingQueue[String]
       def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
-        ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+        SimpleBlockingQueue[String](maxItems, fullPolicy)
     })
   }
 }

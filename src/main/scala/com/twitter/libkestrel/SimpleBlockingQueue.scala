@@ -42,6 +42,13 @@ final class SimpleBlockingQueue[A <: AnyRef](
     true
   }
 
+  def putHead(item: A) {
+    synchronized {
+      item +=: queue
+    }
+    waiters.trigger()
+  }
+
   def size: Int = queue.size
 
   def get(): Future[Option[A]] = get(500.days.fromNow)

@@ -20,6 +20,7 @@ import com.twitter.util.{Future, Time}
 
 trait BlockingQueue[A <: AnyRef] {
   def put(item: A): Boolean
+  def putHead(item: A)
   def size: Int
   def get(): Future[Option[A]]
   def get(deadline: Time): Future[Option[A]]

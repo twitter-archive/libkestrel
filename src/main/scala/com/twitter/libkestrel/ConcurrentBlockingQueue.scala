@@ -1,3 +1,19 @@
+/*
+ * Copyright 2011 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.twitter.libkestrel
 
 import com.twitter.util._
@@ -53,6 +69,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * into play.
    */
   private[this] val queue = new ConcurrentLinkedQueue[A]
+
+  /**
+   * Items "returned" to the head of this queue. Usually this has zero or only a few items.
+   */
+  private[this] val headQueue = new ConcurrentLinkedQueue[A]
 
   /**
    * A queue of readers, some waiting with a timeout, others polling.
@@ -121,6 +142,16 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       handoff()
       true
     }
+  }
+
+  /**
+   * Inserts the specified element into this queue at the head, without checking capacity
+   * restrictions. This is used to "return" items to a queue.
+   */
+  def putHead(item: A) {
+    headQueue.add(item)
+    elementCount.incrementAndGet()
+    handoff()
   }
 
   /**
@@ -195,7 +226,14 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       }
     }
 
-    val item = queue.peek()
+    var fromHead = false
+    val item = {
+      val x = headQueue.peek()
+      if (x ne null) {
+        fromHead = true
+        x
+      } else queue.peek()
+    }
     if (item ne null) {
       var consumer: Consumer = null
       var invalid = true
@@ -209,7 +247,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       } while (invalid)
 
       if ((consumer ne null) && consumer(item)) {
-        queue.poll()
+        if (fromHead) headQueue.poll() else queue.poll()
         if (elementCount.decrementAndGet() == 0) {
           dumpPollerSet
         }
