@@ -26,7 +26,7 @@ import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
 class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
-    new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue)
+    new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue, None)
 
   def makeJournal(name: String): Journal = makeJournal(name, 16.megabytes)
 

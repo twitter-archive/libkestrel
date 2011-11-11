@@ -25,6 +25,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection.immutable
 import scala.collection.JavaConverters._
+import java.util.concurrent.atomic.AtomicLong
 
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
@@ -36,7 +37,9 @@ case class JournaledQueueReaderConfig(
   maxExpireSweep: Int = Int.MaxValue,
 
   // counters
-  incrExpiredCount: () => Unit = { () => }
+  incrExpiredCount: () => Unit = { () => },
+  incrDiscardedCount: () => Unit = { () => },
+  incrPutCount: () => Unit = { () => }
 )
 
 case class JournaledQueueConfig(
@@ -46,16 +49,18 @@ case class JournaledQueueConfig(
   journalSize: StorageUnit = 16.megabytes,
   syncJournal: Duration = Duration.MaxValue,
   saveArchivedJournals: Option[File] = None,
+  checkpointTimer: Duration = 1.second,
 
   readerConfigs: Map[String, JournaledQueueReaderConfig] = Map.empty,
   defaultReaderConfig: JournaledQueueReaderConfig = new JournaledQueueReaderConfig()
 )
 
-class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) {
+class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
   private[this] val log = Logger.get(getClass)
 
   private[this] val journal = if (config.journaled) {
-    Some(new Journal(path, config.name, config.journalSize, timer, config.syncJournal))
+    Some(new Journal(path, config.name, config.journalSize, timer, config.syncJournal,
+      config.saveArchivedJournals))
   } else {
     None
   }
@@ -64,9 +69,14 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
 
   @volatile private[this] var readerMap = immutable.Map.empty[String, Reader]
 
+  @volatile private[this] var nonJournalId = 0L
+
   journal.foreach { j =>
     j.readerMap.foreach { case (name, _) => reader(name) }
   }
+
+  // checkpoint readers on a schedule.
+  timer.schedule(config.checkpointTimer) { checkpoint() }
 
   def reader(name: String) = {
     readerMap.get(name).getOrElse {
@@ -82,21 +92,55 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     }
   }
 
-  /*
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[Boolean] = {
-    if (closed || data.size > config.maxItemSize.inBytes) return Future(false)
-    // if any reader is full, the put is rejected.
-    if (readerMap.values.exists { r => !r.canPut }) return Future(false)
-    journal.map { j =>
-      j.put(data, addTime, expireTime).map { case (item, syncFuture) =>
+  /**
+   * Save the state of all readers.
+   */
+  def checkpoint() {
+    journal.foreach { _.checkpoint() }
+  }
 
+  /**
+   * Close this queue. Any further operations will fail.
+   */
+  def close() {
+    closed = true
+    readerMap.values.foreach { _.close() }
+  }
+
+  /**
+   * Close this queue and also erase any journal files.
+   */
+  def erase() {
+    close()
+    journal.foreach { _.erase() }
+  }
+
+  /**
+   * Put an item into the queue. If the put fails, `None` is returned. On success, the item has
+   * been added to every reader, and the returned future will trigger when the journal has been
+   * written to disk.
+   */
+  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Option[Future[Unit]] = {
+    if (closed || data.size > config.maxItemSize.inBytes) return None
+    // if any reader is rejecting puts, the put is rejected.
+    if (readerMap.values.exists { r => !r.canPut }) return None
+
+    Some(journal.map { j =>
+      j.put(data, addTime, expireTime, { item =>
+        readerMap.values.foreach { _.put(item) }
+      }).flatMap { case (item, syncFuture) =>
+        syncFuture
       }
     }.getOrElse {
       // no journal
-
-    }
+      serialized {
+        nonJournalId += 1
+        val item = QueueItem(nonJournalId, addTime, expireTime, data)
+        readerMap.values.foreach { _.put(item) }
+      }
+    })
   }
-*/
+
 
   class Reader(name: String, readerConfig: JournaledQueueReaderConfig) extends Serialized {
     val journalReader = journal.map { _.reader(name) }
@@ -106,6 +150,8 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     @volatile var bytes = 0L
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
+    @volatile var discarded = 0L
+    @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
 
@@ -161,39 +207,45 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       journalReader.foreach { _.checkpoint() }
     }
 
-    /*
-     * x if the queue is full, discard or fail.
-     * - check if we should enter read-behind.
-     * - _add:
-     *   - discard any expired items
-     *   - add to memory if not in read-behind
-     *   - incr totalItems, queueSize, queueLength
-     * - wake up any waiters
-     */
-
     def canPut: Boolean = {
       readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest ||
         (items < readerConfig.maxItems && bytes < readerConfig.maxSize.inBytes)
     }
 
-    /*
-    def put(item: QueueItem): Boolean = {
-      serialized {
-        // we've already checked canPut by here, but we may still drop the oldest item.
-        if (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
-            (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
-          // FIXME remove.
+    // this happens within the serialized block of a put.
+    private[libkestrel] def put(item: QueueItem) {
+      discardExpired(readerConfig.maxExpireSweep)
+      // we've already checked canPut by here, but we may still drop the oldest item(s).
+      while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
+          (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
+        queue.poll().foreach { item =>
+          readerConfig.incrDiscardedCount()
+          discarded += 1
+          commitItem(item)
         }
-
-
-
-              log.info("Entering read-behind for %s+%s", queueName, name)
-
       }
 
+      val inReadBehind = journalReader.map { j =>
+        if (j.inReadBehind && item.id > j.readBehindId) {
+          true
+        } else if (!j.inReadBehind && memoryBytes >= readerConfig.maxMemorySize.inBytes) {
+          log.info("Dropping to read-behind for queue '%s+%s' (%s)", config.name, name,
+            bytes.bytes.toHuman)
+          j.startReadBehind(item.id - 1)
+          true
+        } else {
+          false
+        }
+      }.getOrElse(false)
 
+      if (!inReadBehind) {
+        queue.put(item)
+        memoryBytes += item.data.size
+      }
+      items += 1
+      bytes += item.data.size
+      readerConfig.incrPutCount()
     }
-    */
 
     private[this] def hasExpired(startTime: Time, expireTime: Option[Time], now: Time): Boolean = {
       val adjusted = if (readerConfig.maxAge.isDefined) {
@@ -202,7 +254,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       } else {
         expireTime
       }
-      adjusted.isDefined && adjusted.get < now
+      adjusted.isDefined && adjusted.get <= now
     }
 
     // check the in-memory portion of the queue and discard anything that's expired.
@@ -223,6 +275,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       if (removedItems > 0) {
         serialized {
           items -= removedItems
+          expired += removedItems
           bytes -= removedBytes
           memoryBytes -= removedBytes
           journalReader.foreach { j =>
@@ -291,12 +344,17 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       }
 
       serialized {
-        journalReader.foreach { _.commit(item.id) }
-        items -= 1
-        bytes -= item.data.size
-        memoryBytes -= item.data.size
-        fillReadBehind()
+        commitItem(item)
       }
+    }
+
+    // serialized
+    private[this] def commitItem(item: QueueItem) {
+      journalReader.foreach { _.commit(item.id) }
+      items -= 1
+      bytes -= item.data.size
+      memoryBytes -= item.data.size
+      fillReadBehind()
     }
 
     /**
@@ -322,62 +380,15 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       }
       future
     }
-  }
 
+    // FIXME
+    def flush() { }
 
-
-
-/*
- * x bail if queue closed or item too large.
- * - if any reader is too full, discard or fail.
- * - check rotate journal.
- * - check if any readers should enter read-behind.
- * - _add:
- *   - discard any expired items
- *   - add to memory if not in read-behind
- *   - incr totalItems, queueSize, queueLength
- * - journal.add
- * - wake up any waiters
- *
-
-  def add(value: Array[Byte], expiry: Option[Time], xid: Option[Int]): Boolean = {
-    val future = synchronized {
-
-            if (closed || value.size > config.maxItemSize.inBytes) return false
-      if (config.fanoutOnly && !isFanout) return true
-      while (queueLength >= config.maxItems || queueSize >= config.maxSize.inBytes) {
-        if (!config.discardOldWhenFull) return false
-        _remove(false, None)
-        totalDiscarded.incr()
-        if (config.keepJournal) journal.remove()
-      }
-
-      val item = QItem(addTime, adjustExpiry(Time.now, expiry), value, 0)
-      if (config.keepJournal) {
-        checkRotateJournal()
-        if (!journal.inReadBehind && (queueSize >= config.maxMemorySize.inBytes)) {
-          log.info("Dropping to read-behind for queue '%s' (%s)", name, queueSize.bytes.toHuman())
-          journal.startReadBehind()
-        }
-      }
-
-      val now = Time.now
-      val item = QItem(now, adjustExpiry(now, expiry), value, 0)
-      if (xid != None) openTransactions.remove(xid.get)
-      _add(item)
-      if (config.keepJournal) {
-        xid match {
-          case None => journal.add(item)
-          case Some(xid) => journal.continue(xid, item)
-        }
-      } else {
-        Future.void()
+    def close() {
+      journal.foreach { j =>
+        j.checkpoint()()
+        j.close()
       }
     }
-    waiters.trigger()
-    // for now, don't wait:
-    //future()
-    true
   }
-  */
 }

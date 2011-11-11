@@ -20,15 +20,15 @@ object Journal {
     }.toSet
   }
 
-  def builder(queuePath: File, timer: Timer, syncJournal: Duration) = {
+  def builder(queuePath: File, timer: Timer, syncJournal: Duration, saveArchivedJournals: Option[File]) = {
     (queueName: String, maxFileSize: StorageUnit) => {
-      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal)
+      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal, saveArchivedJournals)
     }
   }
 
-  def builder(queuePath: File, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration) = {
+  def builder(queuePath: File, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration, saveArchivedJournals: Option[File]) = {
     (queueName: String) => {
-      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal)
+      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal, saveArchivedJournals)
     }
   }
 }
@@ -39,9 +39,14 @@ object Journal {
  *   - one state file for each reader (<prefix>.read.<name>)
  * The files filled with adds will be chunked as they reach `maxFileSize` in length.
  */
-class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration)
-  extends Serialized
-{
+class Journal(
+  queuePath: File,
+  queueName: String,
+  maxFileSize: StorageUnit,
+  timer: Timer,
+  syncJournal: Duration,
+  saveArchivedJournals: Option[File]
+) extends Serialized {
   private[this] val log = Logger.get(getClass)
 
   val prefix = new File(queuePath, queueName)
@@ -233,7 +238,12 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     idMap.takeWhile { case (id, fileInfo) => id <= minHead }.dropRight(1).foreach { case (id, fileInfo) =>
       log.info("Erasing unused journal file for '%s': %s", queueName, fileInfo.file)
       idMap = idMap - id
-      fileInfo.file.delete()
+      if (saveArchivedJournals.isDefined) {
+        val archiveFile = new File(saveArchivedJournals.get, "archive~" + fileInfo.file.getName)
+        fileInfo.file.renameTo(archiveFile)
+      } else {
+        fileInfo.file.delete()
+      }
     }
   }
 
@@ -310,16 +320,17 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     removeTemporaryFiles()
   }
 
-  def checkpoint() {
-    readerMap.foreach { case (name, reader) =>
+  def checkpoint(): Future[Unit] = {
+    val futures = readerMap.map { case (name, reader) =>
       reader.checkpoint()
     }
     serialized {
       checkOldFiles()
     }
+    Future.join(futures.toSeq)
   }
 
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Future[(QueueItem, Future[Unit])] = {
+  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time], f: QueueItem => Unit = { _ => }): Future[(QueueItem, Future[Unit])] = {
     serialized {
       _tailId += 1
       val id = _tailId
@@ -328,6 +339,8 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
       currentItems += 1
       currentBytes += data.size
       if (_journalFile.position >= maxFileSize.inBytes) rotate()
+      // give the caller a chance to run some other code serialized:
+      f(item)
       (item, future)
     }
   }
@@ -365,7 +378,7 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
     /**
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
-    def checkpoint() {
+    def checkpoint(): Future[Unit] = {
       val head = _head
       val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
@@ -416,6 +429,8 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
 
     def inReadBehind = readBehind.isDefined
 
+    def readBehindId = readBehind.get.id
+
     /**
      * Open the journal file containing a given item, so we can read items directly out of the
      * file. This means the queue no longer wants to try keeping every item in memory.
@@ -453,7 +468,6 @@ class Journal(queuePath: File, queueName: String, maxFileSize: StorageUnit, time
 
       def start() {
         val fileInfo = fileInfoForId(startId).getOrElse { idMap(earliestHead) }
-        if (logIt) log.debug("Entering read-behind for %s+%s: %s", queueName, name, fileInfo.file)
         val jf = JournalFile.openWriter(fileInfo.file, timer, syncJournal)
         if (startId >= earliestHead) {
           var lastId = -1L

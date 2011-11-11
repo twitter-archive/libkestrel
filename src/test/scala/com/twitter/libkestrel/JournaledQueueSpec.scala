@@ -21,14 +21,39 @@ import com.twitter.conversions.time._
 import com.twitter.util._
 import java.io._
 import java.nio.{ByteBuffer, ByteOrder}
+import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
 class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
-  val READER_CONFIG = new JournaledQueueReaderConfig()
-  val CONFIG = new JournaledQueueConfig(name = "test")
+  class Counters {
+    val expired = new AtomicLong(0)
+    val discarded = new AtomicLong(0)
+    val put = new AtomicLong(0)
+  }
+  val counters = new Counters()
+
+  val config = new JournaledQueueConfig(name = "test")
+
+  def makeReaderConfig() = {
+    new JournaledQueueReaderConfig(
+      incrExpiredCount = { () => counters.expired.incrementAndGet() },
+      incrDiscardedCount = { () => counters.discarded.incrementAndGet() },
+      incrPutCount = { () => counters.put.incrementAndGet() }
+    )
+  }
 
   val timer = new JavaTimer(isDaemon = true)
+
+  def makeQueue(
+    config: JournaledQueueConfig = config,
+    readerConfig: JournaledQueueReaderConfig = makeReaderConfig()
+  ) = {
+    counters.expired.set(0L)
+    counters.discarded.set(0L)
+    counters.put.set(0L)
+    new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer)
+  }
 
   def haveId(id: Long) = new Matcher[Array[Byte]]() {
     def apply(data: Array[Byte]) = MatchResult(
@@ -42,7 +67,15 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     )
   }
 
-  def setupWriteJournals(itemsPerJournal: Int, journals: Int) {
+  def makeId(id: Long, size: Int) = {
+    val data = new Array[Byte](size)
+    val buffer = ByteBuffer.wrap(data)
+    buffer.order(ByteOrder.BIG_ENDIAN)
+    buffer.putLong(id)
+    data
+  }
+
+  def setupWriteJournals(itemsPerJournal: Int, journals: Int, expiredItems: Int = 0) {
     var id = 1L
     (0 until journals).foreach { journalId =>
       val jf = JournalFile.createWriter(new File(testFolder, "test." + journalId), null, Duration.MaxValue)
@@ -51,7 +84,11 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val buffer = ByteBuffer.wrap(x)
         buffer.order(ByteOrder.BIG_ENDIAN)
         buffer.putLong(id)
-        jf.put(QueueItem(id, Time.now, None, x))
+        if (id <= expiredItems) {
+          jf.put(QueueItem(id, 10.seconds.ago, Some(5.seconds.ago), x))
+        } else {
+          jf.put(QueueItem(id, Time.now, None, x))
+        }
         id += 1
       }
       jf.close()
@@ -68,28 +105,30 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   describe("JournaledQueue") {
     it("can be created") {
       Time.withCurrentTimeFrozen { timeMutator =>
-        val q = new JournaledQueue(CONFIG, testFolder, null)
+        val q = makeQueue()
         val reader = q.reader("")
         assert(new File(testFolder, "test." + Time.now.inMilliseconds).exists)
         reader.checkpoint()
         assert(new File(testFolder, "test.read.").exists)
+        q.close()
       }
     }
 
     it("starts new readers at the end of the queue") {
       setupWriteJournals(4, 2)
-      val q = new JournaledQueue(CONFIG, testFolder, null)
+      val q = makeQueue()
       val reader = q.reader("")
       assert(reader.items === 0)
       assert(reader.bytes === 0)
       assert(reader.memoryBytes === 0)
+      q.close()
     }
 
     describe("can read existing journals") {
       it("small") {
         setupWriteJournals(4, 2)
         setupReadJournal("", 3L)
-        val q = new JournaledQueue(CONFIG, testFolder, null)
+        val q = makeQueue()
         val reader = q.reader("")
 
         assert(reader.items === 5)
@@ -99,40 +138,43 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(item.isDefined)
         item.get.data should haveId(4L)
         assert(item.get.id === 4L)
+        q.close()
       }
 
       it("in read-behind") {
         setupWriteJournals(4, 2)
         (0L to 4L).foreach { readId =>
           setupReadJournal("", readId)
-          val readerConfig = READER_CONFIG.copy(maxMemorySize = 4.kilobytes)
-          val q = new JournaledQueue(CONFIG.copy(defaultReaderConfig = readerConfig), testFolder, null)
+          val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
+          val q = makeQueue(readerConfig = readerConfig)
           val reader = q.reader("")
 
           assert(reader.items === 8 - readId)
           assert(reader.bytes === (8 - readId) * 1024)
           assert(reader.memoryBytes === 4 * 1024)
+          q.close()
         }
       }
 
       it("with a caught-up reader") {
         setupWriteJournals(4, 2)
         setupReadJournal("", 8L)
-        val q = new JournaledQueue(CONFIG, testFolder, null)
+        val q = makeQueue()
         val reader = q.reader("")
 
         assert(reader.items === 0)
         assert(reader.bytes === 0L)
         assert(reader.memoryBytes === 0L)
         assert(reader.get(None)() == None)
+        q.close()
       }
     }
 
     it("fills read-behind as items are removed") {
       setupWriteJournals(4, 2)
       setupReadJournal("", 0)
-      val readerConfig = READER_CONFIG.copy(maxMemorySize = 4.kilobytes)
-      val q = new JournaledQueue(CONFIG.copy(defaultReaderConfig = readerConfig), testFolder, null)
+      val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
+      val q = makeQueue(readerConfig = readerConfig)
       val reader = q.reader("")
 
       assert(reader.items === 8)
@@ -160,12 +202,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(reader.items === 0)
       assert(reader.bytes === 0)
       assert(reader.memoryBytes === 0)
+      q.close()
     }
 
     it("tracks open reads") {
       setupWriteJournals(4, 1)
       setupReadJournal("", 3)
-      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val q = makeQueue()
       val reader = q.reader("")
 
       val item = reader.get(None)()
@@ -183,12 +226,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(reader.bytes === 1024L)
       assert(reader.openItems === 0)
       assert(reader.openBytes === 0L)
+      q.close()
     }
 
     it("gives returned items to the next reader") {
       setupWriteJournals(4, 1)
       setupReadJournal("", 3)
-      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val q = makeQueue()
       val reader = q.reader("")
 
       val item = reader.get(None)()
@@ -200,12 +244,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       reader.unget(item.get.id)
       assert(future.isDefined)
       assert(future().get.id === 4L)
+      q.close()
     }
 
     it("peek") {
       setupWriteJournals(4, 1)
       setupReadJournal("", 0)
-      val q = new JournaledQueue(CONFIG, testFolder, timer)
+      val q = makeQueue()
       val reader = q.reader("")
 
       val item = reader.peek()()
@@ -215,22 +260,186 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val item2 = reader.get(None)()
       assert(item2.isDefined)
       assert(item2.get.id === 1L)
+      q.close()
+    }
+
+    it("expires old items") {
+      setupWriteJournals(4, 1, expiredItems = 1)
+      setupReadJournal("", 0)
+      val q = makeQueue()
+      val reader = q.reader("")
+
+      assert(reader.expired === 0)
+      val item = reader.get(None)()
+      assert(item.isDefined)
+      assert(item.get.id === 2L)
+      assert(reader.expired === 1)
+      assert(counters.expired.get === 1)
+      q.close()
+    }
+
+    it("saves archived journals") {
+      setupWriteJournals(4, 2)
+      setupReadJournal("", 0)
+      val q = makeQueue(config = config.copy(saveArchivedJournals = Some(testFolder)))
+      val reader = q.reader("")
+
+      (0 until 8).foreach { id =>
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        reader.commit(item.get.id)
+      }
+      q.checkpoint()
+      assert(new File(testFolder, "archive~test.0").exists)
+      assert(!new File(testFolder, "test.0").exists)
+      assert(new File(testFolder, "test.1").exists)
+    }
+
+    it("honors default expiration") {
+      Time.withCurrentTimeFrozen { timeMutator =>
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(maxAge = Some(1.second)))
+        q.put("hi".getBytes, Time.now, None)
+
+        timeMutator.advance(1.second)
+        assert(q.reader("").get(None)() === None)
+      }
+    }
+
+    describe("checkpoint") {
+      it("on close") {
+        setupWriteJournals(4, 1)
+        setupReadJournal("", 0)
+        val q = makeQueue()
+        val reader = q.reader("")
+
+        assert(reader.items === 4)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        reader.commit(item.get.id)
+        assert(reader.items === 3)
+        q.close()
+
+        val q2 = makeQueue()
+        val reader2 = q.reader("")
+        assert(reader2.items === 3)
+        q2.close()
+      }
+
+      it("on timer") {
+        setupWriteJournals(4, 1)
+        setupReadJournal("", 0)
+        val q = makeQueue(config = config.copy(checkpointTimer = 5.milliseconds))
+        val reader = q.reader("")
+
+        assert(reader.items === 4)
+        assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
+          JournalFile.Record.ReadHead(0L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        ))
+
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        reader.commit(item.get.id)
+        assert(reader.items === 3)
+
+        Thread.sleep(100)
+
+        assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
+          JournalFile.Record.ReadHead(1L),
+          JournalFile.Record.ReadDone(Array[Long]())
+        ))
+        q.close()
+      }
+    }
+
+    describe("put") {
+      it("can put and get") {
+        val q = makeQueue()
+        val reader = q.reader("")
+        q.put("hi".getBytes, Time.now, None)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(new String(item.get.data) === "hi")
+        assert(counters.put.get === 1)
+        q.close()
+      }
+
+      it("discards old entries") {
+        val q = makeQueue(readerConfig = makeReaderConfig().copy(
+          maxItems = 1,
+          fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest
+        ))
+        val reader = q.reader("")
+
+        q.put("hi".getBytes, Time.now, None)
+        assert(reader.items === 1)
+
+        q.put("scoot over".getBytes, Time.now, None)
+        assert(reader.items === 1)
+
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(new String(item.get.data) === "scoot over")
+        assert(counters.put.get === 2)
+        assert(counters.discarded.get === 1)
+        assert(reader.discarded === 1)
+        q.close()
+      }
+
+      it("enters read-behind") {
+        val q = makeQueue(readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes))
+        val reader = q.reader("")
+        (1 to 8).foreach { id =>
+          q.put(makeId(id, 1024), Time.now, None)
+          assert(reader.items === id)
+          assert(reader.bytes === 1024L * id)
+          assert(reader.memoryBytes === (4096L min (id * 1024)))
+        }
+        (1 to 8).foreach { id =>
+          val item = reader.get(None)()
+          assert(item.isDefined)
+          item.get.data should haveId(id)
+          assert(item.get.id === id)
+          reader.commit(item.get.id)
+          assert(reader.items === (8 - id))
+          assert(reader.bytes === 1024L * (8 - id))
+          assert(reader.memoryBytes === (4096L min ((8 - id) * 1024)))
+        }
+        q.close()
+      }
+    }
+
+    it("exists without a journal") {
+      val q = makeQueue(config = config.copy(journaled = false))
+      val reader = q.reader("")
+
+      q.put("first post".getBytes, Time.now, None)
+      q.put("laggy".getBytes, Time.now, None)
+      val item = reader.get(None)()
+      assert(item.isDefined)
+      assert(new String(item.get.data) === "first post")
+      q.close()
+
+      assert(!new File(testFolder, "test.read.").exists)
+
+      val q2 = makeQueue(config = config.copy(journaled = false))
+      val reader2 = q.reader("")
+      val item2 = reader.get(None)()
+      assert(!item2.isDefined)
+      q2.close()
+    }
+
+    it("erases journals when asked") {
+      setupWriteJournals(4, 3)
+      setupReadJournal("", 0)
+      val q = makeQueue()
+      val reader = q.reader("")
+
+      assert(new File(testFolder, "test.1").exists)
+      assert(new File(testFolder, "test.read.").exists)
+      q.erase()
+      assert(!new File(testFolder, "test.1").exists)
+      assert(!new File(testFolder, "test.read.").exists)
     }
   }
 }
-
-/*
-
-
-class JournaledQueueSpec extends Specification with Argh with TestFolder {
-  "JournaledQueue" should {
-
-    "exist without a journal" in {
-      val q = new JournaledQueue(CONFIG.copy(journaled = false), testFolder, null)
-
-      //q.put()
-      // FIXME
-    }
-  }
-}
-*/
