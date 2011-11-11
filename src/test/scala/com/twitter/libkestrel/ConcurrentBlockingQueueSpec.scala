@@ -7,7 +7,7 @@ import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import scala.collection.mutable
 
 class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
-  implicit val javaTimer: Timer = new JavaTimer()
+  implicit var timer: MockTimer = null
 
   trait QueueBuilder {
     def newQueue(): BlockingQueue[String]
@@ -120,21 +120,58 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
     }
 
     it("timeout") {
-      val queue = newQueue()
-      val future = queue.get(10.milliseconds.fromNow)
-      assert(eventually(future.isDefined))
-      assert(future() === None)
+      Time.withCurrentTimeFrozen { timeMutator =>
+        val queue = newQueue()
+        val future = queue.get(10.milliseconds.fromNow)
+
+        timeMutator.advance(10.milliseconds)
+        timer.tick()
+
+        assert(future.isDefined)
+        assert(future() === None)
+      }
     }
 
     it("fulfill gets before they timeout") {
-      val queue = newQueue()
-      val future1 = queue.get(10.milliseconds.fromNow)
-      val future2 = queue.get(10.milliseconds.fromNow)
-      queue.put("surprise!")
-      assert(eventually(future1.isDefined))
-      assert(eventually(future2.isDefined))
-      assert(future1() === Some("surprise!"))
-      assert(future2() === None)
+      Time.withCurrentTimeFrozen { timeMutator =>
+        val queue = newQueue()
+        val future1 = queue.get(10.milliseconds.fromNow)
+        val future2 = queue.get(10.milliseconds.fromNow)
+        queue.put("surprise!")
+
+        timeMutator.advance(10.milliseconds)
+        timer.tick()
+
+        assert(future1.isDefined)
+        assert(future2.isDefined)
+        assert(future1() === Some("surprise!"))
+        assert(future2() === None)
+      }
+    }
+
+    describe("really long timeout is cancelled") {
+      val deadline = 7.days.fromNow
+
+      it("when an item arrives") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 1)
+
+        queue.put("hello!")
+        assert(future() === Some("hello!"))
+        timer.tick()
+        assert(timer.tasks.size === 0)
+      }
+
+      it("when the future is cancelled") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 1)
+
+        future.cancel()
+        timer.tick()
+        assert(timer.tasks.size === 0)
+      }
     }
 
     it("get an item or throw a timeout exception, but not both") {
@@ -178,17 +215,29 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
 
   describe("ConcurrentBlockingQueue") {
     tests(new QueueBuilder {
-      def newQueue() = ConcurrentBlockingQueue[String]
-      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
+      def newQueue() = {
+        timer = new MockTimer()
+        ConcurrentBlockingQueue[String]
+      }
+
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) = {
+        timer = new MockTimer()
         ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+      }
     })
   }
 
   describe("SimpleBlockingQueue") {
     tests(new QueueBuilder {
-      def newQueue() = SimpleBlockingQueue[String]
-      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
+      def newQueue() = {
+        timer = new MockTimer()
+        SimpleBlockingQueue[String]
+      }
+
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) = {
+        timer = new MockTimer()
         SimpleBlockingQueue[String](maxItems, fullPolicy)
+      }
     })
   }
 }

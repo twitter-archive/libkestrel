@@ -215,36 +215,38 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
     // this happens within the serialized block of a put.
     private[libkestrel] def put(item: QueueItem) {
       discardExpired(readerConfig.maxExpireSweep)
-      // we've already checked canPut by here, but we may still drop the oldest item(s).
-      while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
-          (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
-        queue.poll().foreach { item =>
-          readerConfig.incrDiscardedCount()
-          discarded += 1
-          commitItem(item)
+      serialized {
+        // we've already checked canPut by here, but we may still drop the oldest item(s).
+        while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
+            (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
+          queue.poll().foreach { item =>
+            readerConfig.incrDiscardedCount()
+            discarded += 1
+            commitItem(item)
+          }
         }
-      }
 
-      val inReadBehind = journalReader.map { j =>
-        if (j.inReadBehind && item.id > j.readBehindId) {
-          true
-        } else if (!j.inReadBehind && memoryBytes >= readerConfig.maxMemorySize.inBytes) {
-          log.info("Dropping to read-behind for queue '%s+%s' (%s)", config.name, name,
-            bytes.bytes.toHuman)
-          j.startReadBehind(item.id - 1)
-          true
-        } else {
-          false
+        val inReadBehind = journalReader.map { j =>
+          if (j.inReadBehind && item.id > j.readBehindId) {
+            true
+          } else if (!j.inReadBehind && memoryBytes >= readerConfig.maxMemorySize.inBytes) {
+            log.info("Dropping to read-behind for queue '%s+%s' (%s)", config.name, name,
+              bytes.bytes.toHuman)
+            j.startReadBehind(item.id - 1)
+            true
+          } else {
+            false
+          }
+        }.getOrElse(false)
+
+        if (!inReadBehind) {
+          queue.put(item)
+          memoryBytes += item.data.size
         }
-      }.getOrElse(false)
-
-      if (!inReadBehind) {
-        queue.put(item)
-        memoryBytes += item.data.size
+        items += 1
+        bytes += item.data.size
+        readerConfig.incrPutCount()
       }
-      items += 1
-      bytes += item.data.size
-      readerConfig.incrPutCount()
     }
 
     private[this] def hasExpired(startTime: Time, expireTime: Option[Time], now: Time): Boolean = {
@@ -303,6 +305,8 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       }
     }
 
+    def inReadBehind = journalReader.map { _.inReadBehind }.getOrElse(false)
+
     /**
      * Remove and return an item from the queue, if there is one.
      * If no deadline is given, an item is only returned if one is immediately available.
@@ -354,6 +358,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       items -= 1
       bytes -= item.data.size
       memoryBytes -= item.data.size
+      if (items == 0) age = 0.milliseconds
       fillReadBehind()
     }
 
@@ -381,11 +386,25 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       future
     }
 
-    // FIXME
-    def flush() { }
+    /**
+     * Drain all items from this reader.
+     */
+    def flush() {
+      serialized {
+        journalReader.foreach { j =>
+          j.flush()
+          j.checkpoint()
+        }
+        while (queue.poll().isDefined) { }
+        items = 0
+        bytes = 0
+        memoryBytes = 0
+        age = 0.nanoseconds
+      }
+    }
 
     def close() {
-      journal.foreach { j =>
+      journalReader.foreach { j =>
         j.checkpoint()()
         j.close()
       }
