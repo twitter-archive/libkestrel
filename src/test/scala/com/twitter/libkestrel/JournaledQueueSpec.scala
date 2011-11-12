@@ -334,11 +334,53 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     }
 
     it("sends expired items to the callback") {
-      assert(false)
+      Time.withCurrentTimeFrozen { timeMutator =>
+        var received: Option[QueueItem] = None
+        def callback(item: QueueItem) {
+          received = Some(item)
+        }
+
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(processExpiredItem = callback))
+        val reader = q.reader("")
+        q.put("dead!".getBytes, Time.now, Some(1.second.fromNow))
+
+        timeMutator.advance(1.second)
+        assert(reader.get(None)() === None)
+        assert(received.isDefined)
+        assert(new String(received.get.data) === "dead!")
+      }
     }
 
     it("limits the number of expirations in a single sweep") {
-      assert(false)
+      Time.withCurrentTimeFrozen { timeMutator =>
+        var received: List[String] = Nil
+        def callback(item: QueueItem) {
+          received ::= new String(item.data)
+        }
+
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          processExpiredItem = callback,
+          maxExpireSweep = 3
+        ))
+        val reader = q.reader("")
+        (1 to 10).foreach { id =>
+          q.put(id.toString.getBytes, Time.now, Some(100.milliseconds.fromNow))
+        }
+
+        timeMutator.advance(100.milliseconds)
+        assert(reader.items === 10)
+        assert(received === Nil)
+
+        q.put("poof".getBytes, Time.now, None)
+        assert(reader.items === 8)
+        assert(received === List("3", "2", "1"))
+        received = Nil
+
+        q.put("poof".getBytes, Time.now, None)
+        assert(reader.items === 6)
+        assert(received === List("6", "5", "4"))
+        q.close()
+      }
     }
 
     it("honors default expiration") {
@@ -436,7 +478,18 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     }
 
     it("can configure two readers differently") {
-      assert(false)
+      val q = makeQueue(config = config.copy(
+        readerConfigs = Map("small" -> new JournaledQueueReaderConfig(maxMemorySize = 1.kilobyte))
+      ))
+      val reader1 = q.reader("big")
+      val reader2 = q.reader("small")
+
+      (1 to 5).foreach { id =>
+        q.put(makeId(id, 512), Time.now, None)
+      }
+      assert(!reader1.inReadBehind)
+      assert(reader2.inReadBehind)
+      q.close()
     }
 
     describe("put") {
@@ -501,11 +554,35 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       }
 
       it("honors maxItems") {
-        assert(false)
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          maxItems = 3,
+          fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest
+        ))
+        val reader = q.reader("")
+        (1 to 5).foreach { id =>
+          q.put(id.toString.getBytes, Time.now, None)
+        }
+        assert(reader.items === 3)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(new String(item.get.data) === "3")
+        q.close()
       }
 
       it("honors maxSize") {
-        assert(false)
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          maxSize = 3.kilobytes,
+          fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest
+        ))
+        val reader = q.reader("")
+        (1 to 5).foreach { id =>
+          q.put(makeId(id, 1024), Time.now, None)
+        }
+        assert(reader.items === 3)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        item.get.data should haveId(3)
+        q.close()
       }
     }
 

@@ -218,7 +218,7 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
       serialized {
         // we've already checked canPut by here, but we may still drop the oldest item(s).
         while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
-            (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
+               (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
           queue.poll().foreach { item =>
             readerConfig.incrDiscardedCount()
             discarded += 1
@@ -272,7 +272,9 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
         removedItems += 1
         removedBytes += item.get.data.size
         removedIds.add(item.get.id)
-        item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
+        if (removedItems < max) {
+          item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
+        }
       }
       if (removedItems > 0) {
         serialized {

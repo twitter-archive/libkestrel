@@ -256,6 +256,7 @@ class Journal(
     }
     // open new file
     var newFile = uniqueFile(new File(queuePath, queueName + "."))
+    log.info("Rotating %s to file %s", queueName, newFile)
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
     currentItems = 0
     currentBytes = 0
@@ -373,6 +374,7 @@ class Journal(
         journalFile.close()
       }
       _head = (_head min _tailId) max (earliestHead - 1)
+      log.debug("Read checkpoint %s+%s: head=%s done=(%s)", queueName, name, _head, _doneSet.toSeq.sorted.mkString(","))
     }
 
     /**
@@ -383,7 +385,7 @@ class Journal(
       val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
       serialized {
-        log.debug("Checkpoint %s+%s", queueName, name)
+        log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
         val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
         val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
         newJournalFile.readHead(_head)
@@ -421,6 +423,7 @@ class Journal(
     def flush() {
       _head = _tailId
       _doneSet.popAll()
+      endReadBehind()
     }
 
     def close() {
