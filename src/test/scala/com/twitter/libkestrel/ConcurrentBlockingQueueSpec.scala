@@ -174,29 +174,6 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
       }
     }
 
-    // FIXME i dont think this test is really... *testing* anything.
-    it("get an item or throw a timeout exception, but not both") {
-      Time.withCurrentTimeFrozen { timeMutator =>
-        var ex = 0
-        (0 until 100).foreach { i =>
-          val queue = newQueue()
-          val future = queue.get(10.milliseconds.fromNow)
-          timeMutator.advance(10.milliseconds)
-          // the future will throw an exception if it's set twice.
-          if (i % 2 == 0) timer.tick()
-          queue.put("ahoy!")
-          if (i % 2 == 1) timer.tick()
-          future() match {
-            case Some(x) => assert(x === "ahoy!")
-            case None => ex += 1
-          }
-        }
-        if (ex == 0 || ex == 100) {
-          println("WARNING: Not really enough timer jitter to make this test valid (ex = %d).".format(ex))
-        }
-      }
-    }
-
     it("remain calm in the presence of a put-storm") {
       val count = 100
       val queue = newQueue()
