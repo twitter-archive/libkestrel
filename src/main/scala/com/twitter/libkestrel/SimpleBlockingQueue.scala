@@ -64,11 +64,12 @@ final class SimpleBlockingQueue[A <: AnyRef](
     item match {
       case s @ Some(x) => promise.setValue(s)
       case None => {
-        waiters.add(
+        val w = waiters.add(
           deadline,
           { () => waitFor(promise, deadline) },
           { () => promise.setValue(None) }
         )
+        promise.onCancellation { waiters.remove(w) }
       }
     }
   }
@@ -102,13 +103,14 @@ final class DeadlineWaitQueue(timer: Timer) {
   case class Waiter(var timerTask: TimerTask, awaken: () => Unit)
   private val queue = new LinkedHashSet[Waiter].asScala
 
-  def add(deadline: Time, awaken: () => Unit, onTimeout: () => Unit) {
+  def add(deadline: Time, awaken: () => Unit, onTimeout: () => Unit) = {
     val waiter = Waiter(null, awaken)
     val timerTask = timer.schedule(deadline) {
       if (synchronized { queue.remove(waiter) }) onTimeout()
     }
     waiter.timerTask = timerTask
     synchronized { queue.add(waiter) }
+    waiter
   }
 
   def trigger() {
@@ -117,7 +119,10 @@ final class DeadlineWaitQueue(timer: Timer) {
         queue.remove(waiter)
         waiter
       }
-    }.foreach { _.awaken() }
+    }.foreach { waiter =>
+      waiter.timerTask.cancel()
+      waiter.awaken()
+    }
   }
 
   def triggerAll() {
@@ -125,7 +130,15 @@ final class DeadlineWaitQueue(timer: Timer) {
       val rv = queue.toArray
       queue.clear()
       rv
-    }.foreach { _.awaken() }
+    }.foreach { waiter =>
+      waiter.timerTask.cancel()
+      waiter.awaken()
+    }
+  }
+
+  def remove(waiter: Waiter) {
+    synchronized { queue.remove(waiter) }
+    waiter.timerTask.cancel()
   }
 
   def size = {

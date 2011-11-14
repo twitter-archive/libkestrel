@@ -200,6 +200,10 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       }
     }
     consumers.add(Waiter(promise, timerTask))
+    promise.onCancellation {
+      waiterSet.remove(promise)
+      timerTask.foreach { _.cancel() }
+    }
     if (!queue.isEmpty) handoff()
     promise
   }
