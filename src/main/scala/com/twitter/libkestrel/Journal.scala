@@ -256,7 +256,12 @@ class Journal(
     }
     // open new file
     var newFile = uniqueFile(new File(queuePath, queueName + "."))
-    log.info("Rotating %s to file %s", queueName, newFile)
+    if (_journalFile eq null) {
+      log.info("Rotating %s to %s", queueName, newFile)
+    } else {
+      log.info("Rotating %s from %s (%s) to %s", queueName, _journalFile.file,
+        _journalFile.position.bytes.toHuman, newFile)
+    }
     _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
     currentItems = 0
     currentBytes = 0
