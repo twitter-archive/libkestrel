@@ -1,74 +1,50 @@
+/*
+ * Copyright 2011 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.twitter.libkestrel
 package load
 
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReferenceArray
 import scala.collection.mutable
 import com.twitter.conversions.time._
-import com.twitter.util.{JavaTimer, Timer}
+import com.twitter.logging.{ConsoleHandler, Formatter, Logger}
 
-object PutTest {
+object PutTest extends LoadTesting {
   val description = "write as many items as we can into a queue, concurrently, and time it"
 
   var threadCount = Runtime.getRuntime.availableProcessors() * 2
   var itemCount = 10000
-  var itemLimit = 1000
   var cycles = 10
-  var oldQueue = false
 
-  implicit val javaTimer: Timer = new JavaTimer()
-
-  def usage() {
-    Console.println("usage: qtest put [options]")
-    Console.println("    %s".format(description))
-    Console.println()
-    Console.println("options:")
-    Console.println("    -t THREADS")
-    Console.println("        use THREADS writer threads (default: %d)".format(threadCount))
-    Console.println("    -n ITEMS")
-    Console.println("        write ITEMS items in each thread (default: %d)".format(itemCount))
-    Console.println("    -L ITEMS")
-    Console.println("        limit total queue size to ITEMS (default: %d)".format(itemLimit))
-    Console.println("    -C CYCLES")
-    Console.println("        run test CYCLES times (for jit warmup) (default: %d)".format(cycles))
-    Console.println("    -Q")
-    Console.println("        use old simple queue instead, for comparison")
+  val parser = new CommonOptionParser("qtest put") {
+    common()
+    opt("t", "threads", "<threads>", "set number of writer threads (default: %d)".format(threadCount), { x: String =>
+      threadCount = x.toInt
+    })
+    opt("n", "items", "<items>", "set number of items to write in each thread (default: %d)".format(itemCount), { x: String =>
+      itemCount = x.toInt
+    })
+    opt("C", "cycles", "<cycles>", "set number of test runs (for jit warmup) (default: %d)".format(cycles), { x: String =>
+      cycles = x.toInt
+    })
   }
 
-  def parseArgs(args: List[String]) {
-    args match {
-      case Nil =>
-      case "--help" :: xs =>
-        usage()
-        System.exit(0)
-      case "-t" :: x :: xs =>
-        threadCount = x.toInt
-        parseArgs(xs)
-      case "-n" :: x :: xs =>
-        itemCount = x.toInt
-        parseArgs(xs)
-      case "-L" :: x :: xs =>
-        itemLimit = x.toInt
-        parseArgs(xs)
-      case "-C" :: x :: xs =>
-        cycles = x.toInt
-        parseArgs(xs)
-      case "-Q" :: xs =>
-        oldQueue = true
-        parseArgs(xs)
-      case _ =>
-        usage()
-        System.exit(1)
-    }
-  }
-
-  def cycle() {
-    val queue = if (oldQueue) {
-      SimpleBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
-    } else {
-      ConcurrentBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
-    }
-
+  def cycle(queue: BlockingQueue[String]) {
     val startLatch = new CountDownLatch(1)
     val timings = new AtomicReferenceArray[Long](threadCount)
     val threads = (0 until threadCount).map { threadId =>
@@ -120,11 +96,20 @@ object PutTest {
   }
 
   def apply(args: List[String]) {
-    parseArgs(args)
+    val logLevel = Logger.levelNames(Option[String](System.getenv("log")).getOrElse("FATAL").toUpperCase)
+    val rootLog = Logger.get("")
+    rootLog.setLevel(logLevel)
+    rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
 
-    println("put: writers=%d, items=%d, item_limit=%d, cycles=%d, oldq=%s".format(
-      threadCount, itemCount, itemLimit, cycles, oldQueue
+    if (!parser.parse(args)) {
+      System.exit(1)
+    }
+    val queue = makeQueue()
+
+    println("put: writers=%d, items=%d, item_limit=%d, cycles=%d, queue=%s".format(
+      threadCount, itemCount, itemLimit, cycles, queue.toDebug
     ))
-    (0 until cycles).foreach { n => cycle() }
+    (0 until cycles).foreach { n => cycle(queue) }
+    queue.close()
   }
 }
