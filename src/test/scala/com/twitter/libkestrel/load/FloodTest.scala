@@ -67,6 +67,7 @@ object FloodTest extends LoadTesting {
 
     val startLatch = new CountDownLatch(1)
     val lastId = new AtomicIntegerArray(writerThreadCount)
+    val writerDone = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow
 
     val writers = (0 until writerThreadCount).map { threadId =>
@@ -79,6 +80,7 @@ object FloodTest extends LoadTesting {
             if (queue.size > maxItems) Thread.sleep(5)
           }
           lastId.set(threadId, id)
+          writerDone.set(threadId, 1)
         }
       }
     }.toList
@@ -89,6 +91,13 @@ object FloodTest extends LoadTesting {
     val readTimings = new AtomicLongArray(readerThreadCount)
     val readPolls = new AtomicIntegerArray(readerThreadCount)
 
+    def writersDone(): Boolean = {
+      (0 until writerThreadCount).foreach { i =>
+        if (writerDone.get(i) != 1) return false
+      }
+      true
+    }
+
     val readers = (0 until readerThreadCount).map { threadId =>
       new Thread() {
         override def run() {
@@ -96,7 +105,7 @@ object FloodTest extends LoadTesting {
           val startTime = System.nanoTime
           var count = 0
           var polls = 0
-          while (deadline > Time.now || queue.size > 0) {
+          while (deadline > Time.now || queue.size > 0 || !writersDone()) {
             val item = if (random() % 100 < pollPercent) {
               polls += 1
               queue.poll()
@@ -149,6 +158,15 @@ object FloodTest extends LoadTesting {
           println("*** Mismatched count for writer %d: wrote=%d read=%d".format(
             threadId, lastId.get(threadId), received(threadId).size
           ))
+          (0 until lastId.get(threadId)).foreach { id =>
+            val atom = received(threadId).get(id)
+            if (atom eq null) {
+              print("%d ".format(id))
+            } else if (atom.get() != 1) {
+              print("%d(%d) ".format(atom.get()))
+            }
+          }
+          println()
           ok = false
         } else {
           println("writer %d wrote %d".format(threadId, lastId.get(threadId)))

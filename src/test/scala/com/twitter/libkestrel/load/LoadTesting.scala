@@ -17,7 +17,7 @@
 package com.twitter.libkestrel
 package load
 
-import com.twitter.logging.{ConsoleHandler, Formatter, Logger}
+import com.twitter.logging.{ConsoleHandler, FileHandler, Formatter, Logger, Policy}
 import com.twitter.util.{JavaTimer, Timer}
 import java.io.File
 import scopt.OptionParser
@@ -86,6 +86,13 @@ trait LoadTesting {
     val logLevel = Logger.levelNames(Option[String](System.getenv("log")).getOrElse("FATAL").toUpperCase)
     val rootLog = Logger.get("")
     rootLog.setLevel(logLevel)
-    rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
+    System.getenv("logfile") match {
+      case null => {
+        rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
+      }
+      case filename => {
+        rootLog.addHandler(new FileHandler(filename, Policy.Never, true, 0, new Formatter(), None))
+      }
+    }
   }
 }

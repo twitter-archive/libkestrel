@@ -151,7 +151,8 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
 
     new BlockingQueue[A] {
       def put(item: A) = {
-        JournaledQueue.this.put(codec.encode(item), Time.now, None).isDefined
+        val rv = JournaledQueue.this.put(codec.encode(item), Time.now, None)
+        rv.isDefined && { rv.get.get(); true }
       }
 
       def putHead(item: A) {
