@@ -91,6 +91,11 @@ final class SimpleBlockingQueue[A <: AnyRef](
       "<SimpleBlockingQueue size=%d waiters=%d>".format(queue.size, waiters.size)
     }
   }
+
+  def close() {
+    queue.clear()
+    waiters.triggerAll()
+  }
 }
 
 /**

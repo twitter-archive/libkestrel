@@ -272,4 +272,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   def toDebug: String = {
     "<ConcurrentBlockingQueue size=%d waiters=%d/%d/%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
   }
+
+  def close() {
+    queue.clear()
+    headQueue.clear()
+    waiterSet.asScala.keys.foreach { _.setValue(None) }
+    pollerSet.asScala.keys.foreach { _.setValue(None) }
+  }
 }

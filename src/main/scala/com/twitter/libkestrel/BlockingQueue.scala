@@ -27,4 +27,5 @@ trait BlockingQueue[A <: AnyRef] {
   def poll(): Option[A]
   def pollIf(predicate: A => Boolean): Option[A]
   def toDebug: String
+  def close()
 }
