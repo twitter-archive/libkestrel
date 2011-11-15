@@ -27,6 +27,11 @@ import scala.collection.immutable
 import scala.collection.JavaConverters._
 import java.util.concurrent.atomic.AtomicLong
 
+trait Codec[A] {
+  def encode(item: A): Array[Byte]
+  def decode(data: Array[Byte]): A
+}
+
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
   maxSize: StorageUnit = Long.MaxValue.bytes,
@@ -55,7 +60,7 @@ case class JournaledQueueConfig(
   defaultReaderConfig: JournaledQueueReaderConfig = new JournaledQueueReaderConfig()
 )
 
-class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
+class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
   private[this] val log = Logger.get(getClass)
 
   private[this] val journal = if (config.journaled) {
@@ -139,6 +144,54 @@ class JournaledQueue[A](config: JournaledQueueConfig, path: File, timer: Timer) 
         readerMap.values.foreach { _.put(item) }
       }
     })
+  }
+
+  def toBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): BlockingQueue[A] = {
+    val reader = JournaledQueue.this.reader("")
+
+    new BlockingQueue[A] {
+      def put(item: A) = {
+        JournaledQueue.this.put(codec.encode(item), Time.now, None).isDefined
+      }
+
+      def putHead(item: A) {
+        throw new Exception("Unsupported operation")
+      }
+
+      def size: Int = reader.items
+
+      def get(): Future[Option[A]] = get(100.days.fromNow)
+
+      def get(deadline: Time): Future[Option[A]] = {
+        reader.get(Some(1.day.fromNow)).map { optItem =>
+          optItem.map { item =>
+            reader.commit(item.id)
+            codec.decode(item.data)
+          }
+        }
+      }
+
+      def poll(): Option[A] = {
+        reader.get(None).map { optItem =>
+          optItem.map { item =>
+            reader.commit(item.id)
+            codec.decode(item.data)
+          }
+        }()
+      }
+
+      def pollIf(predicate: A => Boolean): Option[A] = {
+        throw new Exception("Unsupported operation")
+      }
+
+      def toDebug: String = {
+        "<JournaledQueue: size=%d bytes=%d age=%s>".format(reader.items, reader.bytes, reader.age)
+      }
+
+      def close() {
+        JournaledQueue.this.close()
+      }
+    }
   }
 
 
