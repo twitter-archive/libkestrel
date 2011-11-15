@@ -17,6 +17,7 @@
 package com.twitter.libkestrel
 package load
 
+import com.twitter.logging.{ConsoleHandler, Formatter, Logger}
 import com.twitter.util.{JavaTimer, Timer}
 import java.io.File
 import scopt.OptionParser
@@ -36,7 +37,8 @@ trait LoadTesting {
   }
 
   var queueType: QueueType = QueueType.Concurrent
-  var itemLimit = 1000
+  var itemLimit = 10000
+  var sleep = 0
 
   class CommonOptionParser(name: String) extends OptionParser(name) {
     def common() {
@@ -45,6 +47,9 @@ trait LoadTesting {
       opt("J", "journal", "use journaled queue in /tmp", { queueType = QueueType.Journaled; () })
       opt("L", "limit", "<items>", "limit total queue size (default: %d)".format(itemLimit), { x: String =>
         itemLimit = x.toInt
+      })
+      opt("z", "sleep", "number of seconds to sleep before starting (for profiling) (default: %d)".format(sleep), { x: String =>
+        sleep = x.toInt
       })
     }
   }
@@ -67,5 +72,20 @@ trait LoadTesting {
         ), new File("/tmp"), javaTimer).toBlockingQueue[String]
       }
     }
+  }
+
+  def maybeSleep() {
+    if (sleep > 0) {
+      println("Sleeping %d seconds...".format(sleep))
+      Thread.sleep(sleep * 1000)
+      println("Okay.")
+    }
+  }
+
+  def setup() {
+    val logLevel = Logger.levelNames(Option[String](System.getenv("log")).getOrElse("FATAL").toUpperCase)
+    val rootLog = Logger.get("")
+    rootLog.setLevel(logLevel)
+    rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
   }
 }

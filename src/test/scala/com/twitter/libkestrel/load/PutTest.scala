@@ -22,7 +22,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReferenceArray
 import scala.collection.mutable
 import com.twitter.conversions.time._
-import com.twitter.logging.{ConsoleHandler, Formatter, Logger}
 
 object PutTest extends LoadTesting {
   val description = "write as many items as we can into a queue, concurrently, and time it"
@@ -96,11 +95,7 @@ object PutTest extends LoadTesting {
   }
 
   def apply(args: List[String]) {
-    val logLevel = Logger.levelNames(Option[String](System.getenv("log")).getOrElse("FATAL").toUpperCase)
-    val rootLog = Logger.get("")
-    rootLog.setLevel(logLevel)
-    rootLog.addHandler(new ConsoleHandler(new Formatter(), None))
-
+    setup()
     if (!parser.parse(args)) {
       System.exit(1)
     }
