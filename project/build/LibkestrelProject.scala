@@ -20,7 +20,8 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   val util_logging = "com.twitter" % "util-logging" % "1.12.3"
 
   // for tests
-  val scalatest = "org.scalatest" % "scalatest_2.8.1" % "1.5.1"
+  val scalatest = "org.scalatest" % "scalatest_2.8.1" % "1.5.1" % "test"
+  val scopt = "com.github.scopt" %% "scopt" % "1.1.1" % "test"
 
   override def subversionRepository = Some("http://svn.local.twitter.com/maven")
 
