@@ -164,7 +164,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
       def get(): Future[Option[A]] = get(100.days.fromNow)
 
       def get(deadline: Time): Future[Option[A]] = {
-        reader.get(Some(1.day.fromNow)).map { optItem =>
+        reader.get(Some(deadline)).map { optItem =>
           optItem.map { item =>
             reader.commit(item.id)
             codec.decode(item.data)
