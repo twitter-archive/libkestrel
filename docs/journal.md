@@ -28,6 +28,7 @@ with smaller numbers being older segments of the journal.
 Each file contains a 4-byte identifying header followed by a sequence of records.
 
 Each record is:
+
 - command (1 byte)
 - header bytes (optional)
 - data bytes (optional)
@@ -64,12 +65,14 @@ An item was added to the queue. This is the only entry in the writer files.
 The header size is either 5 or 7.
 
 Header:
+
   - i32 data size
   - i64 xid
   - i64 add_time (msec)
   - i64 expire_time (msec) [optional]
 
 Data:
+
   - (bytes)
 
 ## Read checkpoint
@@ -82,6 +85,7 @@ The id of the current queue head for this reader. The header size is always
 2.
 
 Header:
+
   - i64 id (0 for empty queue)
 
 ### READ_DONE (9)
@@ -91,8 +95,10 @@ out-of-order. These ids will always be greater than the current head id. The
 header size is always 1, and the data block is a sequence of 64-bit ids.
 
 Header:
+
   - i32 count
   
 Data:
+
   - i64* xid
 
