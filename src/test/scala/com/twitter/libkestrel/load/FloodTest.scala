@@ -60,8 +60,8 @@ object FloodTest extends LoadTesting {
     }
     val queue = makeQueue()
 
-    println("flood: writers=%d, readers=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, queue=%s".format(
-      writerThreadCount, readerThreadCount, testTime, pollPercent, maxItems, validate, queue.toDebug
+    println("flood: writers=%d, readers=%d, item_limit=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, queue=%s".format(
+      writerThreadCount, readerThreadCount, itemLimit, testTime, pollPercent, maxItems, validate, queue.toDebug
     ))
     maybeSleep()
 

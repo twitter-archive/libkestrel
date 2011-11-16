@@ -186,7 +186,8 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
       }
 
       def toDebug: String = {
-        "<JournaledQueue: size=%d bytes=%d age=%s>".format(reader.items, reader.bytes, reader.age)
+        "<JournaledQueue: size=%d bytes=%d age=%s queue=%s>".format(
+          reader.items, reader.bytes, reader.age, reader.queue.toDebug)
       }
 
       def close() {
@@ -198,7 +199,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
 
   class Reader(name: String, readerConfig: JournaledQueueReaderConfig) extends Serialized {
     val journalReader = journal.map { _.reader(name) }
-    private[this] val queue = ConcurrentBlockingQueue[QueueItem](timer)
+    private[libkestrel] val queue = ConcurrentBlockingQueue[QueueItem](timer)
 
     @volatile var items = 0
     @volatile var bytes = 0L

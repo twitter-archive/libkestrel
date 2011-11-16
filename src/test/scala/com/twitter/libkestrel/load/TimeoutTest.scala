@@ -1,13 +1,29 @@
+/*
+ * Copyright 2011 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.twitter.libkestrel
 package load
 
+import com.twitter.conversions.time._
+import com.twitter.util._
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.{AtomicInteger, AtomicIntegerArray}
 import scala.collection.JavaConverters._
-import com.twitter.conversions.time._
-import com.twitter.util.{TimeoutException, Time, JavaTimer, Timer}
 
-object TimeoutTest {
+object TimeoutTest extends LoadTesting {
   val description = "write items into a queue at a slow rate while a bunch of reader threads stampede"
 
   var writerThreadCount = 1
@@ -16,76 +32,40 @@ object TimeoutTest {
   var readTimeoutLow = 5.milliseconds
   var readTimeoutHigh = 15.milliseconds
   var testTime = 10.seconds
-  var oldQueue = false
 
-  implicit val javaTimer: Timer = new JavaTimer()
-
-  def usage() {
-    Console.println("usage: qtest timeout [options]")
-    Console.println("    %s".format(description))
-    Console.println()
-    Console.println("options:")
-    Console.println("    -w THREADS")
-    Console.println("        use THREADS writer threads (default: %d)".format(writerThreadCount))
-    Console.println("    -r THREADS")
-    Console.println("        use THREADS reader threads (default: %d)".format(readerThreadCount))
-    Console.println("    -d MILLISECONDS")
-    Console.println("        delay MILLISECONDS between writes (default: %d)".format(writeRate.inMilliseconds))
-    Console.println("    -L MILLISECONDS")
-    Console.println("        low end of the random reader timeout (default: %d)".format(readTimeoutLow.inMilliseconds))
-    Console.println("    -H MILLISECONDS")
-    Console.println("        high end of the random reader timeout (default: %d)".format(readTimeoutHigh.inMilliseconds))
-    Console.println("    -t MILLISECONDS")
-    Console.println("        run test for MILLISECONDS (default: %d)".format(testTime.inMilliseconds))
-    Console.println("    -Q")
-    Console.println("        use old simple queue instead, for comparison")
-  }
-
-  def parseArgs(args: List[String]) {
-    args match {
-      case Nil =>
-      case "--help" :: xs =>
-        usage()
-        System.exit(0)
-      case "-w" :: x :: xs =>
-        writerThreadCount = x.toInt
-        parseArgs(xs)
-      case "-r" :: x :: xs =>
-        readerThreadCount = x.toInt
-        parseArgs(xs)
-      case "-d" :: x :: xs =>
-        writeRate = x.toInt.milliseconds
-        parseArgs(xs)
-      case "-L" :: x :: xs =>
-        readTimeoutLow = x.toInt.milliseconds
-        parseArgs(xs)
-      case "-H" :: x :: xs =>
-        readTimeoutHigh = x.toInt.milliseconds
-        parseArgs(xs)
-      case "-t" :: x :: xs =>
-        testTime = x.toInt.milliseconds
-        parseArgs(xs)
-      case "-Q" :: xs =>
-        oldQueue = true
-        parseArgs(xs)
-      case _ =>
-        usage()
-        System.exit(1)
-    }
+  val parser = new CommonOptionParser("qtest timeout") {
+    common()
+    opt("w", "writers", "<threads>", "set number of writer threads (default: %d)".format(writerThreadCount), { x: String =>
+      writerThreadCount = x.toInt
+    })
+    opt("r", "readers", "<threads>", "set number of reader threads (default: %d)".format(readerThreadCount), { x: String =>
+      readerThreadCount = x.toInt
+    })
+    opt("d", "delay", "<milliseconds>", "delay between writes (default: %d)".format(writeRate.inMilliseconds), { x: String =>
+      writeRate = x.toInt.milliseconds
+    })
+    opt("L", "low", "<milliseconds>", "low end of the random reader timeout (default: %d)".format(readTimeoutLow.inMilliseconds), { x: String =>
+      readTimeoutLow = x.toInt.milliseconds
+    })
+    opt("H", "high", "<milliseconds>", "high end of the random reader timeout (default: %d)".format(readTimeoutHigh.inMilliseconds), { x: String =>
+      readTimeoutHigh = x.toInt.milliseconds
+    })
+    opt("t", "timeout", "<milliseconds>", "run test for this long (default: %d)".format(testTime.inMilliseconds), { x: String =>
+      testTime = x.toInt.milliseconds
+    })
   }
 
   def apply(args: List[String]) {
-    parseArgs(args)
+    setup()
+    if (!parser.parse(args)) {
+      System.exit(1)
+    }
+    val queue = makeQueue()
 
-    println("timeout: writers=%d, readers=%d, write_rate=%s, read_timeout=(%s, %s), run=%s, oldq=%s".format(
-      writerThreadCount, readerThreadCount, writeRate, readTimeoutLow, readTimeoutHigh, testTime, oldQueue
+    println("timeout: writers=%d, readers=%d, item_limit=%d, write_rate=%s, read_timeout=(%s, %s), run=%s, queue=%s".format(
+      writerThreadCount, readerThreadCount, itemLimit, writeRate, readTimeoutLow, readTimeoutHigh, testTime, queue.toDebug
     ))
 
-    val queue = if (oldQueue) {
-      SimpleBlockingQueue[String]
-    } else {
-      ConcurrentBlockingQueue[String]
-    }
     val lastId = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow
     val readerDeadline = deadline + readTimeoutHigh * 2
