@@ -17,9 +17,10 @@ class XorRandom {
 }
 
 object QTest {
-  val version = "20110614"
+  val version = "20111116"
 
   def usage() {
+    Console.println()
     Console.println("usage: qtest <test> [options]")
     Console.println("    run concurrency load tests against ConcurrentBlockingQueue")
     Console.println()
