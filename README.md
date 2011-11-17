@@ -74,6 +74,34 @@ taken never to let any of the journal files be corrupted or in a
 non-recoverable state. In case of error, the choice is always made to possibly
 replay items instead of losing them.
 
+### Infinite scroll
+
+The writer journal is treated as an "infinite scroll" of put operations. Each
+journal file is created with the current timestamp in its filename, and after
+it gets "full" (configurable, but 16MB by default), that file is closed and a
+new one is opened. If no readers ever consumed items from the queue, these
+files would sit around forever.
+
+Once all readers have moved their read-pointer (the head of their queue) past
+the end of journal file, that file is archived. By default, that just means
+the file is deleted, but one of the configuration parameters allows you to
+have the dead files moved to a different folder instead.
+
+There are several advantages to splitting the journals into a single
+(multi-file) writer journal and several reader checkpoint files:
+
+- Fan-out queues (multiple read-pointers into the same queue) are free, and
+  all the readers share a single journal, saving disk space and bandwidth.
+  Disk bandwidth is now almost entirely based on write throughput, not the
+  number of readers.
+
+- The journals never have to be "packed" to save disk space, the way they did
+  in kestrel 2.x. Packing creates more disk I/O at the very time a server
+  might be struggling to keep up with existing load.
+
+- Archiving old queue items is trivial, and allows you to do some
+  meta-analysis of load offline.
+
 
 ## Tests
 
