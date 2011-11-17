@@ -11,7 +11,7 @@ Libkestrel is a library for scala/java containing:
 
 These are variants and improvements of the building blocks of the kestrel
 distributed queue server project. The intent (as of November 2011) is to make
-kestrel to use this library in its next major release.
+kestrel use this library in its next major release.
 
 
 ## Build
@@ -45,11 +45,9 @@ blocked.
 
 ## JournaledQueue
 
-A JournaledQueue is an optionally-journaled queue that may have multiple
-"readers", each of which may have multiple consumers. Various policies
-determine how much of each queue is kept in memory, how large the queue can
-get, and when items expire.
-
+A JournaledQueue is an optionally-journaled queue built on top of
+`ConcurrentBlockingQueue` that may have multiple "readers", each of which may
+have multiple consumers.
 ### Puts
 
 When an item is added to a queue, it's journaled and passed on to any readers.
@@ -57,7 +55,7 @@ There is always at least one reader, and the reader contains the actual
 in-memory queue. If there are multiple readers, they behave as multiple
 independent queues, each receiving a copy of each item added to the
 `JournaledQueue`, but sharing a single journal. They may have different
-policies on memory use and expiration.
+policies on memory use, queue size limits, and item expiration.
 
 ### Gets
 
