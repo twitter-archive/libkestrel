@@ -42,27 +42,35 @@ final class SimpleBlockingQueue[A <: AnyRef](
     true
   }
 
+  def putHead(item: A) {
+    synchronized {
+      item +=: queue
+    }
+    waiters.trigger()
+  }
+
   def size: Int = queue.size
 
-  def get(): Future[A] = get(500.days)
+  def get(): Future[Option[A]] = get(500.days.fromNow)
 
-  def get(timeout: Duration): Future[A] = {
-    val promise = new Promise[A]
-    waitFor(promise, timeout.fromNow)
+  def get(deadline: Time): Future[Option[A]] = {
+    val promise = new Promise[Option[A]]
+    waitFor(promise, deadline)
     promise
   }
 
-  private def waitFor(promise: Promise[A], deadline: Time) {
+  private def waitFor(promise: Promise[Option[A]], deadline: Time) {
     val item = poll()
     item match {
-      case Some(x) =>
-        promise.setValue(x)
-      case None =>
-        waiters.add(
+      case s @ Some(x) => promise.setValue(s)
+      case None => {
+        val w = waiters.add(
           deadline,
           { () => waitFor(promise, deadline) },
-          { () => promise.setException(new TimeoutException("timeout")) }
+          { () => promise.setValue(None) }
         )
+        promise.onCancellation { waiters.remove(w) }
+      }
     }
   }
 
@@ -72,10 +80,21 @@ final class SimpleBlockingQueue[A <: AnyRef](
     }
   }
 
+  def pollIf(predicate: A => Boolean): Option[A] = {
+    synchronized {
+      if (queue.isEmpty || !predicate(queue.head)) None else Some(queue.dequeue())
+    }
+  }
+
   def toDebug: String = {
     synchronized {
       "<SimpleBlockingQueue size=%d waiters=%d>".format(queue.size, waiters.size)
     }
+  }
+
+  def close() {
+    queue.clear()
+    waiters.triggerAll()
   }
 }
 
@@ -89,13 +108,14 @@ final class DeadlineWaitQueue(timer: Timer) {
   case class Waiter(var timerTask: TimerTask, awaken: () => Unit)
   private val queue = new LinkedHashSet[Waiter].asScala
 
-  def add(deadline: Time, awaken: () => Unit, onTimeout: () => Unit) {
+  def add(deadline: Time, awaken: () => Unit, onTimeout: () => Unit) = {
     val waiter = Waiter(null, awaken)
     val timerTask = timer.schedule(deadline) {
       if (synchronized { queue.remove(waiter) }) onTimeout()
     }
     waiter.timerTask = timerTask
     synchronized { queue.add(waiter) }
+    waiter
   }
 
   def trigger() {
@@ -104,7 +124,10 @@ final class DeadlineWaitQueue(timer: Timer) {
         queue.remove(waiter)
         waiter
       }
-    }.foreach { _.awaken() }
+    }.foreach { waiter =>
+      waiter.timerTask.cancel()
+      waiter.awaken()
+    }
   }
 
   def triggerAll() {
@@ -112,7 +135,15 @@ final class DeadlineWaitQueue(timer: Timer) {
       val rv = queue.toArray
       queue.clear()
       rv
-    }.foreach { _.awaken() }
+    }.foreach { waiter =>
+      waiter.timerTask.cancel()
+      waiter.awaken()
+    }
+  }
+
+  def remove(waiter: Waiter) {
+    synchronized { queue.remove(waiter) }
+    waiter.timerTask.cancel()
   }
 
   def size = {

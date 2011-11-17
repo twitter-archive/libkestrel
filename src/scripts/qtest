@@ -1,0 +1,5 @@
+#!/bin/bash
+DIST_HOME="$(dirname $(readlink $0 || echo $0))/.."
+TEST_JAR=$DIST_HOME/libkestrel-tests-@VERSION@.jar
+java -server -classpath @TEST_CLASSPATH@:$TEST_JAR com.twitter.libkestrel.load.QTest "$@"
+

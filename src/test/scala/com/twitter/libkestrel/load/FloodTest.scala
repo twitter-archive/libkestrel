@@ -1,4 +1,21 @@
+/*
+ * Copyright 2011 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.twitter.libkestrel
+package load
 
 import java.util.concurrent.{CountDownLatch, ConcurrentHashMap}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLongArray, AtomicIntegerArray}
@@ -6,7 +23,7 @@ import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
 import com.twitter.util.{TimeoutException, Time, JavaTimer, Timer}
 
-object FloodTest {
+object FloodTest extends LoadTesting {
   val description = "put & get items to/from a queue as fast as possible"
 
   var writerThreadCount = Runtime.getRuntime.availableProcessors()
@@ -15,78 +32,42 @@ object FloodTest {
   var pollPercent = 25
   var maxItems = 10000
   var validate = false
-  var oldQueue = false
 
-  implicit val javaTimer: Timer = new JavaTimer()
-
-  def usage() {
-    Console.println("usage: qtest flood [options]")
-    Console.println("    %s".format(description))
-    Console.println()
-    Console.println("options:")
-    Console.println("    -w THREADS")
-    Console.println("        use THREADS writer threads (default: %d)".format(writerThreadCount))
-    Console.println("    -r THREADS")
-    Console.println("        use THREADS reader threads (default: %d)".format(readerThreadCount))
-    Console.println("    -t MILLISECONDS")
-    Console.println("        run test for MILLISECONDS (default: %d)".format(testTime.inMilliseconds))
-    Console.println("    -p PERCENT")
-    Console.println("        use poll instead of get PERCENT of the time (default: %d)".format(pollPercent))
-    Console.println("    -x ITEMS")
-    Console.println("        slow down the writer threads a bit when the queue reaches ITEMS items (default: %d)".format(maxItems))
-    Console.println("    -V")
-    Console.println("        validate items afterwards (makes it much slower)")
-    Console.println("    -Q")
-    Console.println("        use old simple queue instead, for comparison")
-  }
-
-  def parseArgs(args: List[String]) {
-    args match {
-      case Nil =>
-      case "--help" :: xs =>
-        usage()
-        System.exit(0)
-      case "-w" :: x :: xs =>
-        writerThreadCount = x.toInt
-        parseArgs(xs)
-      case "-r" :: x :: xs =>
-        readerThreadCount = x.toInt
-        parseArgs(xs)
-      case "-t" :: x :: xs =>
-        testTime = x.toInt.milliseconds
-        parseArgs(xs)
-      case "-p" :: x :: xs =>
-        pollPercent = x.toInt
-        parseArgs(xs)
-      case "-x" :: x :: xs =>
-        maxItems = x.toInt
-        parseArgs(xs)
-      case "-V" :: xs =>
-        validate = true
-        parseArgs(xs)
-      case "-Q" :: xs =>
-        oldQueue = true
-        parseArgs(xs)
-      case _ =>
-        usage()
-        System.exit(1)
-    }
+  val parser = new CommonOptionParser("qtest flood") {
+    common()
+    opt("w", "writers", "<threads>", "set number of writer threads (default: %d)".format(writerThreadCount), { x: String =>
+      writerThreadCount = x.toInt
+    })
+    opt("r", "readers", "<threads>", "set number of reader threads (default: %d)".format(readerThreadCount), { x: String =>
+      readerThreadCount = x.toInt
+    })
+    opt("t", "time", "<milliseconds>", "run test for specified time in milliseconds (default: %d)".format(testTime.inMilliseconds), { x: String =>
+      testTime = x.toInt.milliseconds
+    })
+    opt("p", "percent", "<percent>", "set percentage of time to use poll instead of get (default: %d)".format(pollPercent), { x: String =>
+      pollPercent = x.toInt
+    })
+    opt("x", "target", "<items>", "slow down the writer threads a bit when the queue reaches this size (default: %d)".format(maxItems), { x: String =>
+      maxItems = x.toInt
+    })
+    opt("V", "validate", "validate items afterwards (makes it much slower)", { validate = true; () })
   }
 
   def apply(args: List[String]) {
-    parseArgs(args)
-
-    println("flood: writers=%d, readers=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, oldq=%s".format(
-      writerThreadCount, readerThreadCount, testTime, pollPercent, maxItems, validate, oldQueue
-    ))
-
-    val queue = if (oldQueue) {
-      SimpleBlockingQueue[String]
-    } else {
-      ConcurrentBlockingQueue[String]
+    setup()
+    if (!parser.parse(args)) {
+      System.exit(1)
     }
+    val queue = makeQueue()
+
+    println("flood: writers=%d, readers=%d, item_limit=%d, run=%s, poll_percent=%d, max_items=%d, validate=%s, queue=%s".format(
+      writerThreadCount, readerThreadCount, itemLimit, testTime, pollPercent, maxItems, validate, queue.toDebug
+    ))
+    maybeSleep()
+
     val startLatch = new CountDownLatch(1)
     val lastId = new AtomicIntegerArray(writerThreadCount)
+    val writerDone = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow
 
     val writers = (0 until writerThreadCount).map { threadId =>
@@ -99,6 +80,7 @@ object FloodTest {
             if (queue.size > maxItems) Thread.sleep(5)
           }
           lastId.set(threadId, id)
+          writerDone.set(threadId, 1)
         }
       }
     }.toList
@@ -109,6 +91,13 @@ object FloodTest {
     val readTimings = new AtomicLongArray(readerThreadCount)
     val readPolls = new AtomicIntegerArray(readerThreadCount)
 
+    def writersDone(): Boolean = {
+      (0 until writerThreadCount).foreach { i =>
+        if (writerDone.get(i) != 1) return false
+      }
+      true
+    }
+
     val readers = (0 until readerThreadCount).map { threadId =>
       new Thread() {
         override def run() {
@@ -116,16 +105,12 @@ object FloodTest {
           val startTime = System.nanoTime
           var count = 0
           var polls = 0
-          while (deadline > Time.now || queue.size > 0) {
+          while (deadline > Time.now || queue.size > 0 || !writersDone()) {
             val item = if (random() % 100 < pollPercent) {
               polls += 1
               queue.poll()
             } else {
-              try {
-                Some(queue.get(1.millisecond)())
-              } catch {
-                case e: TimeoutException => None
-              }
+              queue.get(1.millisecond.fromNow)()
             }
             if (item.isDefined) count += 1
             if (validate) {
@@ -173,6 +158,15 @@ object FloodTest {
           println("*** Mismatched count for writer %d: wrote=%d read=%d".format(
             threadId, lastId.get(threadId), received(threadId).size
           ))
+          (0 until lastId.get(threadId)).foreach { id =>
+            val atom = received(threadId).get(id)
+            if (atom eq null) {
+              print("%d ".format(id))
+            } else if (atom.get() != 1) {
+              print("%d(%d) ".format(atom.get()))
+            }
+          }
+          println()
           ok = false
         } else {
           println("writer %d wrote %d".format(threadId, lastId.get(threadId)))
@@ -188,5 +182,7 @@ object FloodTest {
       }
       if (ok) println("All good. :)")
     }
+
+    queue.close()
   }
 }

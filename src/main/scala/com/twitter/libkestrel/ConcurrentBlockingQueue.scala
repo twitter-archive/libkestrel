@@ -1,8 +1,25 @@
+/*
+ * Copyright 2011 Twitter, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License. You may obtain
+ * a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.twitter.libkestrel
 
+import com.twitter.util._
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import java.util.concurrent.atomic.AtomicInteger
-import com.twitter.util._
+import scala.collection.JavaConverters._
 
 object ConcurrentBlockingQueue {
   /** What to do when the queue is full and a `put` is attempted (for the constructor). */
@@ -54,18 +71,52 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   private[this] val queue = new ConcurrentLinkedQueue[A]
 
   /**
-   * A queue of readers waiting to retrieve an item.
-   * `waiters` tracks the order for fairness, but `waiterSet` is the definitive set: a waiter may
-   * be in the queue but not in the set, which just means that they had a timeout set, and gave up.
+   * Items "returned" to the head of this queue. Usually this has zero or only a few items.
    */
-  case class Waiter(timerTask: Option[TimerTask], promise: Promise[A])
-  private[this] val waiters = new ConcurrentLinkedQueue[Waiter]
-  private[this] val waiterSet = new ConcurrentHashMap[Promise[A], Promise[A]]
+  private[this] val headQueue = new ConcurrentLinkedQueue[A]
+
+  /**
+   * A queue of readers, some waiting with a timeout, others polling.
+   * `consumers` tracks the order for fairness, but `waiterSet` and `pollerSet` are
+   * the definitive sets: a waiter/poller may be the queue, but not in the set, which
+   * just means that they had a timeout set and gave up or were rejected due to an
+   * empty queue.
+   */
+  abstract sealed class Consumer {
+    def promise: Promise[Option[A]]
+    def apply(item: A): Boolean
+  }
+  private[this] val consumers = new ConcurrentLinkedQueue[Consumer]
+
+  /**
+   * A queue of readers waiting to retrieve an item. See `consumers`.
+   */
+  case class Waiter(promise: Promise[Option[A]], timerTask: Option[TimerTask]) extends Consumer {
+    def apply(item: A) = {
+      timerTask.foreach { _.cancel() }
+      promise.setValue(Some(item))
+      true
+    }
+  }
+  private[this] val waiterSet = new ConcurrentHashMap[Promise[Option[A]], Promise[Option[A]]]
 
   /**
    * A queue of pollers just checking in to see if anything is immediately available.
+   * See `consumers`.
    */
-  private[this] val pollers = new ConcurrentLinkedQueue[Promise[Option[A]]]
+  case class Poller(promise: Promise[Option[A]], predicate: A => Boolean) extends Consumer {
+    def apply(item: A) = {
+      if (predicate(item)) {
+        promise.setValue(Some(item))
+        true
+      } else {
+        promise.setValue(None)
+        false
+      }
+    }
+  }
+  private[this] val truth: A => Boolean = { _ => true }
+  private[this] val pollerSet = new ConcurrentHashMap[Promise[Option[A]], Promise[Option[A]]]
 
   /**
    * An estimate of the queue size, tracked for each put/get.
@@ -94,6 +145,16 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   }
 
   /**
+   * Inserts the specified element into this queue at the head, without checking capacity
+   * restrictions. This is used to "return" items to a queue.
+   */
+  def putHead(item: A) {
+    headQueue.add(item)
+    elementCount.incrementAndGet()
+    handoff()
+  }
+
+  /**
    * Return the size of the queue as it was at some (recent) moment in time.
    */
   def size: Int = elementCount.get()
@@ -101,46 +162,56 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue, waiting forever if necessary.
    */
-  def get(): Future[A] = get(None)
+  def get(): Future[Option[A]] = get(None)
 
   /**
    * Get the next item from the queue if it arrives before a timeout.
    */
-  def get(timeout: Duration): Future[A] = get(Some(timeout))
+  def get(deadline: Time): Future[Option[A]] = get(Some(deadline))
 
   /**
    * Get the next item from the queue if one is immediately available.
    */
-  def poll(): Option[A] = {
+  def poll(): Option[A] = pollIf(truth)
+
+  /**
+   * Get the next item from the queue if it satisfies a predicate.
+   */
+  def pollIf(predicate: A => Boolean): Option[A] = {
     if (queue.isEmpty) {
       None
     } else {
       val promise = new Promise[Option[A]]
-      pollers.add(promise)
+      pollerSet.put(promise, promise)
+      consumers.add(Poller(promise, predicate))
       handoff()
       promise()
     }
   }
 
-  private def get(timeout: Option[Duration]): Future[A] = {
-    val promise = new Promise[A]
+  private def get(deadline: Option[Time]): Future[Option[A]] = {
+    val promise = new Promise[Option[A]]
     waiterSet.put(promise, promise)
-    val timerTask = timeout.map { t =>
-      timer.schedule(t.fromNow) {
+    val timerTask = deadline.map { d =>
+      timer.schedule(d) {
         if (waiterSet.remove(promise) ne null) {
-          promise.setException(new TimeoutException(t.toString))
+          promise.setValue(None)
         }
       }
     }
-    waiters.add(Waiter(timerTask, promise))
+    consumers.add(Waiter(promise, timerTask))
+    promise.onCancellation {
+      waiterSet.remove(promise)
+      timerTask.foreach { _.cancel() }
+    }
     if (!queue.isEmpty) handoff()
     promise
   }
 
   /**
-   * This is the only code path allowed to remove an item from `queue` or `waiters`.
+   * This is the only code path allowed to remove an item from `queue` or `consumers`.
    */
-  private def handoff() {
+  private[this] def handoff() {
     if (triggerLock.getAndIncrement() == 0) {
       do {
         handoffOne()
@@ -148,39 +219,64 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
-  private def handoffOne() {
+  private[this] def handoffOne() {
     if (fullPolicy == FullPolicy.DropOldest) {
       // make sure we aren't over the max queue size.
       while (elementCount.get > maxItems) {
+        // FIXME: increment counter about discarded?
+        // offer discarded item
         queue.poll()
         elementCount.decrementAndGet()
       }
     }
 
-    // FIXME: alternate which is checked first.
-    var poller = pollers.poll()
-    if (poller ne null) {
-      val item = queue.poll()
-      if (item ne null) elementCount.decrementAndGet()
-      poller.setValue(Option(item))
-    } else {
-      val item = queue.peek()
-      if (item ne null) {
-        var waiter = waiters.poll()
-        while ((waiter ne null) && (waiterSet.remove(waiter.promise) eq null)) {
-          waiter = waiters.poll()
+    var fromHead = false
+    val item = {
+      val x = headQueue.peek()
+      if (x ne null) {
+        fromHead = true
+        x
+      } else queue.peek()
+    }
+    if (item ne null) {
+      var consumer: Consumer = null
+      var invalid = true
+      do {
+        consumer = consumers.poll()
+        invalid = consumer match {
+          case null => false
+          case Waiter(promise, _) => waiterSet.remove(promise) eq null
+          case Poller(promise, _) => pollerSet.remove(promise) eq null
         }
-        if (waiter ne null) {
-          waiter.timerTask.foreach { _.cancel() }
-          waiter.promise.setValue(item)
-          queue.poll()
-          elementCount.decrementAndGet()
+      } while (invalid)
+
+      if ((consumer ne null) && consumer(item)) {
+        if (fromHead) headQueue.poll() else queue.poll()
+        if (elementCount.decrementAndGet() == 0) {
+          dumpPollerSet
         }
       }
+    } else {
+      // empty -- dump outstanding pollers
+      dumpPollerSet
+    }
+  }
+
+  private[this] def dumpPollerSet = {
+    pollerSet.keySet.asScala.toArray.foreach { poller =>
+      poller.setValue(None)
+      pollerSet.remove(poller)
     }
   }
 
   def toDebug: String = {
-    "<ConcurrentBlockingQueue size=%d waiters=%d/%d>".format(elementCount.get, waiters.size, waiterSet.size)
+    "<ConcurrentBlockingQueue size=%d waiters=%d/%d/%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
+  }
+
+  def close() {
+    queue.clear()
+    headQueue.clear()
+    waiterSet.asScala.keys.foreach { _.setValue(None) }
+    pollerSet.asScala.keys.foreach { _.setValue(None) }
   }
 }

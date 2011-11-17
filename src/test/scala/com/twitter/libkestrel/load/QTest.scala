@@ -1,4 +1,4 @@
-package com.twitter.libkestrel
+package com.twitter.libkestrel.load
 
 import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
@@ -16,10 +16,11 @@ class XorRandom {
   }
 }
 
-object Main {
-  val version = "20110614"
+object QTest {
+  val version = "20111116"
 
   def usage() {
+    Console.println()
     Console.println("usage: qtest <test> [options]")
     Console.println("    run concurrency load tests against ConcurrentBlockingQueue")
     Console.println()

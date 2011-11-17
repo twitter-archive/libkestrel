@@ -1,122 +1,180 @@
 package com.twitter.libkestrel
 
-import scala.collection.mutable
-import org.specs.Specification
 import com.twitter.conversions.time._
-import com.twitter.util.{TimeoutException, Timer, JavaTimer}
+import com.twitter.util._
+import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
+import scala.collection.mutable
 
-object ConcurrentBlockingQueueSpec extends Specification {
-  implicit val javaTimer: Timer = new JavaTimer()
+class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
+  implicit var timer: MockTimer = null
 
   trait QueueBuilder {
     def newQueue(): BlockingQueue[String]
     def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy): BlockingQueue[String]
   }
 
+  def eventually(f: => Boolean): Boolean = {
+    val deadline = 5.seconds.fromNow
+    while (deadline > Time.now) {
+      if (f) return true
+      Thread.sleep(10)
+    }
+    false
+  }
+
   def tests(builder: QueueBuilder) {
     import builder._
 
-    "add and remove items" in {
+    it("add and remove items") {
       val queue = newQueue()
-      queue.size mustEqual 0
-      queue.put("first") mustEqual true
-      queue.size mustEqual 1
-      queue.put("second") mustEqual true
-      queue.size mustEqual 2
-      queue.get()() mustEqual "first"
-      queue.size mustEqual 1
-      queue.get()() mustEqual "second"
-      queue.size mustEqual 0
+      assert(queue.size === 0)
+      assert(queue.put("first"))
+      assert(queue.size === 1)
+      assert(queue.put("second"))
+      assert(queue.size === 2)
+      assert(queue.get()() === Some("first"))
+      assert(queue.size === 1)
+      assert(queue.get()() === Some("second"))
+      assert(queue.size === 0)
     }
 
-    "poll items" in {
+    it("poll items") {
       val queue = newQueue()
-      queue.size mustEqual 0
-      queue.poll() mustEqual None
-      queue.put("first") mustEqual true
-      queue.size mustEqual 1
-      queue.poll() mustEqual Some("first")
-      queue.poll() mustEqual None
+      assert(queue.size === 0)
+      assert(queue.poll() === None)
+      assert(queue.put("first"))
+      assert(queue.size === 1)
+      assert(queue.poll() === Some("first"))
+      assert(queue.poll() === None)
     }
 
-    "honor the max size" in {
-      "by refusing new puts" in {
+    it("conditionally poll items") {
+      val queue = newQueue()
+      assert(queue.size === 0)
+      assert(queue.poll() === None)
+      assert(queue.put("first") === true)
+      assert(queue.put("second") === true)
+      assert(queue.put("third") === true)
+      assert(queue.size === 3)
+      assert(queue.pollIf(_ contains "t") === Some("first"))
+      assert(queue.pollIf(_ contains "t") === None)
+      assert(queue.pollIf(_ contains "c") === Some("second"))
+      assert(queue.pollIf(_ contains "t") === Some("third"))
+      assert(queue.pollIf(_ contains "t") === None)
+    }
+
+    it("putHead") {
+      val queue = newQueue()
+      assert(queue.size === 0)
+      assert(queue.put("hi"))
+      assert(queue.size === 1)
+      queue.putHead("bye")
+      assert(queue.size === 2)
+      assert(queue.get()() == Some("bye"))
+      assert(queue.size === 1)
+      assert(queue.get()() == Some("hi"))
+      assert(queue.size === 0)
+    }
+
+    describe("honor the max size") {
+      it("by refusing new puts") {
         val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.RefusePuts)
         (0 until 5).foreach { i =>
-          queue.put(i.toString) mustEqual true
+          assert(queue.put(i.toString))
         }
-        queue.size mustEqual 5
-        queue.put("5") mustEqual false
-        queue.size mustEqual 5
+        assert(queue.size === 5)
+        assert(!queue.put("5"))
+        assert(queue.size === 5)
         (0 until 5).foreach { i =>
-          queue.get()() mustEqual i.toString
+          assert(queue.get()() === Some(i.toString))
         }
       }
 
-      "by dropping old items" in {
+      it("by dropping old items") {
         val queue = newQueue(5, ConcurrentBlockingQueue.FullPolicy.DropOldest)
         (0 until 5).foreach { i =>
-          queue.put(i.toString) mustEqual true
+          assert(queue.put(i.toString))
         }
-        queue.size mustEqual 5
-        queue.put("5") mustEqual true
-        queue.size mustEqual 5
+        assert(queue.size === 5)
+        assert(queue.put("5"))
+        assert(queue.size === 5)
         (0 until 5).foreach { i =>
-          queue.get()() mustEqual (i + 1).toString
+          assert(queue.get()() === Some((i + 1).toString))
         }
       }
     }
 
-    "fill in empty promises as items arrive" in {
+    it("fill in empty promises as items arrive") {
       val queue = newQueue()
       val futures = (0 until 10).map { i => queue.get() }.toList
-      futures.foreach { f => f.isDefined mustEqual false }
+      futures.foreach { f => assert(!f.isDefined) }
 
-      (0 until 10).foreach { i => queue.put(i.toString) }
       (0 until 10).foreach { i =>
-        futures(i).isDefined mustEqual true
-        futures(i)() mustEqual i.toString
+        if (i % 2 == 0) queue.put(i.toString) else queue.putHead(i.toString)
+      }
+      (0 until 10).foreach { i =>
+        assert(futures(i).isDefined)
+        assert(futures(i)() === Some(i.toString))
       }
     }
 
-    "timeout" in {
-      val queue = newQueue()
-      val future = queue.get(10.milliseconds)
-      future.isDefined must eventually(be_==(true))
-      future() must throwA[TimeoutException]
-    }
-
-    "fulfill gets before they timeout" in {
-      val queue = newQueue()
-      val future1 = queue.get(10.milliseconds)
-      val future2 = queue.get(10.milliseconds)
-      queue.put("surprise!")
-      future1.isDefined must eventually(be_==(true))
-      future2.isDefined must eventually(be_==(true))
-      future1() mustEqual "surprise!"
-      future2() must throwA[TimeoutException]
-    }
-
-    "get an item or throw a timeout exception, but not both" in {
-      var ex = 0
-      (0 until 100).foreach { i =>
+    it("timeout") {
+      Time.withCurrentTimeFrozen { timeMutator =>
         val queue = newQueue()
-        val future = queue.get(10.milliseconds)
-        Thread.sleep(10)
-        // the future will throw an exception if it's set twice.
-        queue.put("ahoy!")
-        (try {
-          future() == "ahoy!"
-        } catch {
-          case e: TimeoutException =>
-            ex += 1
-            true
-        }) mustEqual true
+        val future = queue.get(10.milliseconds.fromNow)
+
+        timeMutator.advance(10.milliseconds)
+        timer.tick()
+
+        assert(future.isDefined)
+        assert(future() === None)
       }
-      if (ex == 0 || ex == 100) println("WARNING: Not really enough timer jitter to make this test valid.")
     }
 
-    "remain calm in the presence of a put-storm" in {
+    it("fulfill gets before they timeout") {
+      Time.withCurrentTimeFrozen { timeMutator =>
+        val queue = newQueue()
+        val future1 = queue.get(10.milliseconds.fromNow)
+        val future2 = queue.get(10.milliseconds.fromNow)
+        queue.put("surprise!")
+
+        timeMutator.advance(10.milliseconds)
+        timer.tick()
+
+        assert(future1.isDefined)
+        assert(future2.isDefined)
+        assert(future1() === Some("surprise!"))
+        assert(future2() === None)
+      }
+    }
+
+    describe("really long timeout is cancelled") {
+      val deadline = 7.days.fromNow
+
+      it("when an item arrives") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 1)
+
+        queue.put("hello!")
+        assert(future() === Some("hello!"))
+        timer.tick()
+        assert(timer.tasks.size === 0)
+      }
+
+      it("when the future is cancelled") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 1)
+
+        future.cancel()
+        timer.tick()
+        assert(timer.tasks.size === 0)
+      }
+    }
+
+    it("remain calm in the presence of a put-storm") {
       val count = 100
       val queue = newQueue()
       val futures = (0 until count).map { i => queue.get() }.toList
@@ -132,25 +190,38 @@ object ConcurrentBlockingQueueSpec extends Specification {
 
       val collected = new mutable.HashSet[String]
       futures.foreach { f =>
-        collected += f()
+        collected += f().get
       }
-      (0 until count).map { _.toString }.toSet mustEqual collected
+      assert((0 until count).map { _.toString }.toSet === collected)
     }
+
   }
 
-  "ConcurrentBlockingQueue" should {
+  describe("ConcurrentBlockingQueue") {
     tests(new QueueBuilder {
-      def newQueue() = ConcurrentBlockingQueue[String]
-      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
+      def newQueue() = {
+        timer = new MockTimer()
+        ConcurrentBlockingQueue[String]
+      }
+
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) = {
+        timer = new MockTimer()
         ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+      }
     })
   }
 
-  "SimpleBlockingQueue" should {
+  describe("SimpleBlockingQueue") {
     tests(new QueueBuilder {
-      def newQueue() = SimpleBlockingQueue[String]
-      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) =
-        ConcurrentBlockingQueue[String](maxItems, fullPolicy)
+      def newQueue() = {
+        timer = new MockTimer()
+        SimpleBlockingQueue[String]
+      }
+
+      def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy) = {
+        timer = new MockTimer()
+        SimpleBlockingQueue[String](maxItems, fullPolicy)
+      }
     })
   }
 }

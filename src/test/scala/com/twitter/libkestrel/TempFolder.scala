@@ -16,16 +16,24 @@
 
 package com.twitter.libkestrel
 
-import com.twitter.util.{Future, Time}
+import java.io.File
+import org.scalatest._
+import com.twitter.io.Files
 
-trait BlockingQueue[A <: AnyRef] {
-  def put(item: A): Boolean
-  def putHead(item: A)
-  def size: Int
-  def get(): Future[Option[A]]
-  def get(deadline: Time): Future[Option[A]]
-  def poll(): Option[A]
-  def pollIf(predicate: A => Boolean): Option[A]
-  def toDebug: String
-  def close()
+trait TempFolder extends AbstractSuite { self: Suite =>
+  var testFolder: File = _
+
+  abstract override def withFixture(test: NoArgTest) {
+    val tempFolder = System.getProperty("java.io.tmpdir")
+    var folder: File = null
+    do {
+      folder = new File(tempFolder, "scala-test-" + System.currentTimeMillis)
+    } while (! folder.mkdir)
+    testFolder = folder
+    try {
+      super.withFixture(test)
+    } finally {
+      Files.delete(testFolder)
+    }
+  }
 }
