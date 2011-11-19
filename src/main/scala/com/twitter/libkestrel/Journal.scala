@@ -269,7 +269,6 @@ class Journal(
     checkOldFiles()
   }
 
-  // warning: set up your chaining before calling this. _tailId could increment during this method.
   def reader(name: String): Reader = {
     readerMap.get(name).getOrElse {
       // grab a lock so only one thread does this potentially slow thing at once
@@ -297,6 +296,17 @@ class Journal(
           readerMap = readerMap + (name -> reader)
           reader
         }
+      }
+    }
+  }
+
+  // rare operation: destroy a reader.
+  def dropReader(name: String) {
+    synchronized {
+      readerMap.get(name) foreach { reader =>
+        readerMap -= name
+        reader.file.delete()
+        reader.close()
       }
     }
   }
@@ -360,6 +370,7 @@ class Journal(
   case class Reader(_name: String, _file: File) extends Serialized {
     @volatile var file: File = _file
     @volatile var name: String = _name
+    @volatile var haveReadState: Boolean = false
 
     private[this] var _head = 0L
     private[this] val _doneSet = new ItemIdList()
@@ -378,8 +389,17 @@ class Journal(
       } finally {
         journalFile.close()
       }
+      haveReadState = true
       _head = (_head min _tailId) max (earliestHead - 1)
       log.debug("Read checkpoint %s+%s: head=%s done=(%s)", queueName, name, _head, _doneSet.toSeq.sorted.mkString(","))
+    }
+
+    /**
+     * To avoid a race while setting up a new reader, call this after initialization to reset the
+     * head of the queue.
+     */
+    def catchUp() {
+      if (!haveReadState) head = _tailId
     }
 
     /**
@@ -444,7 +464,7 @@ class Journal(
      * file. This means the queue no longer wants to try keeping every item in memory.
      */
     def startReadBehind(id: Long) {
-      readBehind = Some(new Scanner(id, logIt = true))
+      readBehind = Some(new Scanner(id, followFiles = true, logIt = true))
     }
 
     /**

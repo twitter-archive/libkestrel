@@ -86,16 +86,53 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   // checkpoint readers on a schedule.
   timer.schedule(config.checkpointTimer) { checkpoint() }
 
-  def reader(name: String) = {
+  /**
+   * Total number of items across every reader queue being fed by this queue.
+   */
+  def items = readerMap.values.foldLeft(0L) { _ + _.items }
+
+  /**
+   * Total number of bytes of data across every reader queue being fed by this queue.
+   */
+  def bytes = readerMap.values.foldLeft(0L) { _ + _.bytes }
+
+  /**
+   * Get the named reader. If this is a normal (single reader) queue, the default reader is named
+   * "". If any named reader is created, the default reader is converted to that name and there is
+   * no longer a default reader.
+   */
+  def reader(name: String): Reader = {
     readerMap.get(name).getOrElse {
       synchronized {
         readerMap.get(name).getOrElse {
+          if (readerMap.size >= 1 && name == "") throw new Exception("Fanout queues don't have a default reader")
           val readerConfig = config.readerConfigs.get(name).getOrElse(config.defaultReaderConfig)
           val reader = new Reader(name, readerConfig)
           journal.foreach { j => reader.loadFromJournal(j.reader(name)) }
           readerMap += (name -> reader)
+          reader.catchUp()
+
+          if (name != "") {
+            readerMap.get("") foreach { r =>
+              // kill the default reader.
+              readerMap -= ""
+              r.close()
+              journal.foreach { _.dropReader("") }
+            }
+          }
+
           reader
         }
+      }
+    }
+  }
+
+  def dropReader(name: String) {
+    readerMap.get(name) foreach { r =>
+      synchronized {
+        readerMap -= name
+        r.close()
+        journal.foreach { j => j.dropReader(name) }
       }
     }
   }
@@ -129,9 +166,16 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
    * written to disk.
    */
   def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Option[Future[Unit]] = {
-    if (closed || data.size > config.maxItemSize.inBytes) return None
+    if (closed) return None
+    if (data.size > config.maxItemSize.inBytes) {
+      log.debug("Rejecting put to %s: item too large (%s).", config.name, data.size.bytes.toHuman)
+      return None
+    }
     // if any reader is rejecting puts, the put is rejected.
-    if (readerMap.values.exists { r => !r.canPut }) return None
+    if (readerMap.values.exists { r => !r.canPut }) {
+      log.debug("Rejecting put to %s: reader is full.", config.name)
+      return None
+    }
 
     Some(journal.map { j =>
       j.put(data, addTime, expireTime, { item =>
@@ -200,7 +244,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   }
 
 
-  class Reader(name: String, readerConfig: JournaledQueueReaderConfig) extends Serialized {
+  class Reader(private[libkestrel] var name: String, readerConfig: JournaledQueueReaderConfig) extends Serialized {
     val journalReader = journal.map { _.reader(name) }
     private[libkestrel] val queue = ConcurrentBlockingQueue[QueueItem](timer)
 
@@ -228,7 +272,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
     private[libkestrel] def loadFromJournal(j: Journal#Reader) {
       log.info("Replaying contents of %s+%s", config.name, name)
       j.readState()
-      val scanner = new j.Scanner(j.head)
+      val scanner = new j.Scanner(j.head, followFiles = true, logIt = false)
 
       var inReadBehind = false
       var lastId = 0L
@@ -259,6 +303,10 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
 
       log.info("Replaying contents of %s+%s done: %d items, %s, %s in memory",
         config.name, name, items, bytes.bytes.toHuman, memoryBytes.bytes.toHuman)
+    }
+
+    def catchUp() {
+      journalReader.foreach { _.catchUp() }
     }
 
     def checkpoint() {

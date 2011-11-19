@@ -121,6 +121,35 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       intercept[Exception] { makeQueue(config = config.copy(name = "evil.queue")) }
     }
 
+    it("won't re-create the default reader if a named reader is created") {
+      val q = makeQueue()
+      val reader1 = q.reader("")
+      val reader2 = q.reader("client1")
+      intercept[Exception] { q.reader("") }
+    }
+
+    it("can destroy a reader") {
+      val q = makeQueue()
+      val reader1 = q.reader("client1")
+      val reader2 = q.reader("client2")
+      assert(!new File(testFolder, "test.read.").exists)
+      assert(new File(testFolder, "test.read.client1").exists)
+      assert(new File(testFolder, "test.read.client2").exists)
+
+      q.dropReader("client2")
+      assert(!new File(testFolder, "test.read.").exists)
+      assert(new File(testFolder, "test.read.client1").exists)
+      assert(!new File(testFolder, "test.read.client2").exists)
+
+      q.dropReader("client1")
+      assert(!new File(testFolder, "test.read.").exists)
+      assert(!new File(testFolder, "test.read.client1").exists)
+      assert(!new File(testFolder, "test.read.client2").exists)
+
+      q.reader("")
+      assert(new File(testFolder, "test.read.").exists)
+    }
+
     it("starts new readers at the end of the queue") {
       setupWriteJournals(4, 2)
       val q = makeQueue()
