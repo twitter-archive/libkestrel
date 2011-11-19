@@ -114,6 +114,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       }
     }
 
+    it("disallows bad characters") {
+      val q = makeQueue(config = config.copy(name = "this_is-okay"))
+      intercept[Exception] { makeQueue(config = config.copy(name = "evil^queue")) }
+      intercept[Exception] { makeQueue(config = config.copy(name = "evilqueue ")) }
+      intercept[Exception] { makeQueue(config = config.copy(name = "evil.queue")) }
+    }
+
     it("starts new readers at the end of the queue") {
       setupWriteJournals(4, 2)
       val q = makeQueue()

@@ -63,6 +63,9 @@ case class JournaledQueueConfig(
 class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
   private[this] val log = Logger.get(getClass)
 
+  private[this] val NAME_REGEX = """[^A-Za-z0-9:_-]""".r
+  if (NAME_REGEX.findFirstIn(config.name).isDefined) throw new Exception("Illegal queue name: " + config.name)
+
   private[this] val journal = if (config.journaled) {
     Some(new Journal(path, config.name, config.journalSize, timer, config.syncJournal,
       config.saveArchivedJournals))
