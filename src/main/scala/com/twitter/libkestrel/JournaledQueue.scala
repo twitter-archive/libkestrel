@@ -107,6 +107,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         readerMap.get(name).getOrElse {
           if (readerMap.size >= 1 && name == "") throw new Exception("Fanout queues don't have a default reader")
           val readerConfig = config.readerConfigs.get(name).getOrElse(config.defaultReaderConfig)
+          log.info("Creating reader queue %s+%s", config.name, name)
           val reader = new Reader(name, readerConfig)
           journal.foreach { j => reader.loadFromJournal(j.reader(name)) }
           readerMap += (name -> reader)
@@ -130,6 +131,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   def dropReader(name: String) {
     readerMap.get(name) foreach { r =>
       synchronized {
+        log.info("Destroying reader queue %s+%s", config.name, name)
         readerMap -= name
         r.close()
         journal.foreach { j => j.dropReader(name) }
@@ -158,6 +160,13 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   def erase() {
     close()
     journal.foreach { _.erase() }
+  }
+
+  /**
+   * Do a sweep of each reader, and discard any expired items.
+   */
+  def discardExpired() = {
+    readerMap.values.foldLeft(0) { _ + _.discardExpired() }
   }
 
   /**
@@ -320,7 +329,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
 
     // this happens within the serialized block of a put.
     private[libkestrel] def put(item: QueueItem) {
-      discardExpired(readerConfig.maxExpireSweep)
+      discardExpired()
       serialized {
         // we've already checked canPut by here, but we may still drop the oldest item(s).
         while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
@@ -363,6 +372,10 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         expireTime
       }
       adjusted.isDefined && adjusted.get <= now
+    }
+
+    def discardExpired(): Int = {
+      discardExpired(readerConfig.maxExpireSweep)
     }
 
     // check the in-memory portion of the queue and discard anything that's expired.
@@ -421,7 +434,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
      */
     def get(deadline: Option[Time]): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
-      discardExpired(readerConfig.maxExpireSweep)
+      discardExpired()
       val future = deadline match {
         case Some(d) => queue.get(d)
         case None => Future.value(queue.poll())
