@@ -363,7 +363,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val q = makeQueue()
       val reader = q.reader("")
 
-      val item = reader.peek()()
+      val item = reader.peek(None)()
       assert(item.isDefined)
       assert(item.get.id === 1L)
 

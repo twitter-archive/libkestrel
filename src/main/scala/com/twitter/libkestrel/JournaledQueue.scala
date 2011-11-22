@@ -486,8 +486,8 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
     /**
      * Peek at the head item in the queue, if there is one.
      */
-    def peek(): Future[Option[QueueItem]] = {
-      val future = get(None)
+    def peek(deadline: Option[Time]): Future[Option[QueueItem]] = {
+      val future = get(deadline)
       future.map { optItem =>
         if (optItem.isDefined) unget(optItem.get.id)
       }
