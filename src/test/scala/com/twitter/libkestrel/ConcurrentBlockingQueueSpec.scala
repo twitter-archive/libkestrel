@@ -64,17 +64,37 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
       assert(queue.pollIf(_ contains "t") === None)
     }
 
-    it("putHead") {
-      val queue = newQueue()
-      assert(queue.size === 0)
-      assert(queue.put("hi"))
-      assert(queue.size === 1)
-      queue.putHead("bye")
-      assert(queue.size === 2)
-      assert(queue.get()() == Some("bye"))
-      assert(queue.size === 1)
-      assert(queue.get()() == Some("hi"))
-      assert(queue.size === 0)
+    describe("putHead") {
+      it("with items") {
+        val queue = newQueue()
+        assert(queue.size === 0)
+        assert(queue.put("hi"))
+        assert(queue.size === 1)
+        queue.putHead("bye")
+        assert(queue.size === 2)
+        assert(queue.get()() == Some("bye"))
+        assert(queue.size === 1)
+        assert(queue.get()() == Some("hi"))
+        assert(queue.size === 0)
+      }
+
+      it("get with no items") {
+        val queue = newQueue()
+        assert(queue.size === 0)
+        queue.putHead("foo")
+        assert(queue.size === 1)
+        assert(queue.get()() == Some("foo"))
+        assert(queue.size === 0)
+      }
+
+      it("poll with no items") {
+        val queue = newQueue()
+        assert(queue.size === 0)
+        queue.putHead("foo")
+        assert(queue.size === 1)
+        assert(queue.poll() == Some("foo"))
+        assert(queue.size === 0)
+      }
     }
 
     describe("honor the max size") {

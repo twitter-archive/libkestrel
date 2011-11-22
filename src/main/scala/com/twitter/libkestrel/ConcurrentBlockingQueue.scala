@@ -183,7 +183,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * Get the next item from the queue if it satisfies a predicate.
    */
   def pollIf(predicate: A => Boolean): Option[A] = {
-    if (queue.isEmpty) {
+    if (queue.isEmpty && headQueue.isEmpty) {
       None
     } else {
       val promise = new Promise[Option[A]]
@@ -209,7 +209,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       waiterSet.remove(promise)
       timerTask.foreach { _.cancel() }
     }
-    if (!queue.isEmpty) handoff()
+    if (!queue.isEmpty || !headQueue.isEmpty) handoff()
     promise
   }
 
@@ -258,16 +258,16 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
       if ((consumer ne null) && consumer(item)) {
         if (fromHead) headQueue.poll() else queue.poll()
         if (elementCount.decrementAndGet() == 0) {
-          dumpPollerSet
+          dumpPollerSet()
         }
       }
     } else {
       // empty -- dump outstanding pollers
-      dumpPollerSet
+      dumpPollerSet()
     }
   }
 
-  private[this] def dumpPollerSet = {
+  private[this] def dumpPollerSet() {
     pollerSet.keySet.asScala.toArray.foreach { poller =>
       poller.setValue(None)
       pollerSet.remove(poller)
