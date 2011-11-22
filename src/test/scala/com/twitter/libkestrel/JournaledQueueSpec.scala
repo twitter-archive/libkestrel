@@ -38,9 +38,9 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
   def makeReaderConfig() = {
     new JournaledQueueReaderConfig(
-      incrExpiredCount = { () => counters.expired.incrementAndGet() },
-      incrDiscardedCount = { () => counters.discarded.incrementAndGet() },
-      incrPutCount = { () => counters.put.incrementAndGet() }
+      incrExpiredCount = { _ => counters.expired.incrementAndGet() },
+      incrDiscardedCount = { _ => counters.discarded.incrementAndGet() },
+      incrPutCount = { _ => counters.put.incrementAndGet() }
     )
   }
 

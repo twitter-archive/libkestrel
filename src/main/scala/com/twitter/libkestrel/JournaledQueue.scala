@@ -322,7 +322,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
                (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
           queue.poll().foreach { item =>
-            readerConfig.incrDiscardedCount()
+            readerConfig.incrDiscardedCount(this)
             discarded += 1
             commitItem(item)
           }
@@ -347,7 +347,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         }
         items += 1
         bytes += item.data.size
-        readerConfig.incrPutCount()
+        readerConfig.incrPutCount(this)
       }
     }
 
@@ -374,7 +374,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
       var item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
       while (item.isDefined && removedItems < max) {
         readerConfig.processExpiredItem(item.get)
-        readerConfig.incrExpiredCount()
+        readerConfig.incrExpiredCount(this)
         removedItems += 1
         removedBytes += item.get.data.size
         removedIds.add(item.get.id)

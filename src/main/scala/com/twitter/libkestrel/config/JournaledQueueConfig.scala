@@ -63,9 +63,9 @@ case class JournaledQueueReaderConfig(
   maxExpireSweep: Int = Int.MaxValue,
 
   // counters
-  incrExpiredCount: () => Unit = { () => },
-  incrDiscardedCount: () => Unit = { () => },
-  incrPutCount: () => Unit = { () => }
+  incrExpiredCount: (JournaledQueue#Reader) => Unit = { _ => },
+  incrDiscardedCount: (JournaledQueue#Reader) => Unit = { _ => },
+  incrPutCount: (JournaledQueue#Reader) => Unit = { _ => }
 ) {
   override def toString() = {
     ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d").format(
