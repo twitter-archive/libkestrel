@@ -70,6 +70,13 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   def bytes = readerMap.values.foldLeft(0L) { _ + _.bytes }
 
   /**
+   * Total number of bytes of data used by the on-disk journal.
+   */
+  def journalBytes = {
+    journal map { _.journalSize } getOrElse(0L)
+  }
+
+  /**
    * Get the named reader. If this is a normal (single reader) queue, the default reader is named
    * "". If any named reader is created, the default reader is converted to that name and there is
    * no longer a default reader.
@@ -242,6 +249,10 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
     // visibility into how many items (and bytes) are in open reads
     def openItems = openReads.values.size
     def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.data.size }
+
+    def waiterCount: Int = queue.waiterCount
+
+    def writer: JournaledQueue = JournaledQueue.this
 
     /*
      * in order to reload the contents of a queue at startup, we need to:
