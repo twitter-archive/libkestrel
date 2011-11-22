@@ -21,6 +21,7 @@ import com.twitter.logging.{ConsoleHandler, FileHandler, Formatter, Logger, Poli
 import com.twitter.util.{JavaTimer, Timer}
 import java.io.File
 import scopt.OptionParser
+import config._
 
 trait LoadTesting {
   implicit val javaTimer: Timer = new JavaTimer()

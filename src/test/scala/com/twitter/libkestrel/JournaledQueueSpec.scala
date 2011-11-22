@@ -24,6 +24,7 @@ import java.nio.{ByteBuffer, ByteOrder}
 import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
+import config._
 
 class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
   class Counters {

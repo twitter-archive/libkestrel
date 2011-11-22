@@ -23,42 +23,15 @@ import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import scala.collection.immutable
 import scala.collection.JavaConverters._
-import java.util.concurrent.atomic.AtomicLong
+import config._
 
 trait Codec[A] {
   def encode(item: A): Array[Byte]
   def decode(data: Array[Byte]): A
 }
-
-case class JournaledQueueReaderConfig(
-  maxItems: Int = Int.MaxValue,
-  maxSize: StorageUnit = Long.MaxValue.bytes,
-  maxMemorySize: StorageUnit = 128.megabytes,
-  maxAge: Option[Duration] = None,
-  fullPolicy: ConcurrentBlockingQueue.FullPolicy = ConcurrentBlockingQueue.FullPolicy.RefusePuts,
-  processExpiredItem: (QueueItem) => Unit = { _ => },
-  maxExpireSweep: Int = Int.MaxValue,
-
-  // counters
-  incrExpiredCount: () => Unit = { () => },
-  incrDiscardedCount: () => Unit = { () => },
-  incrPutCount: () => Unit = { () => }
-)
-
-case class JournaledQueueConfig(
-  name: String,
-  maxItemSize: StorageUnit = Long.MaxValue.bytes,
-  journaled: Boolean = true,
-  journalSize: StorageUnit = 16.megabytes,
-  syncJournal: Duration = Duration.MaxValue,
-  saveArchivedJournals: Option[File] = None,
-  checkpointTimer: Duration = 1.second,
-
-  readerConfigs: Map[String, JournaledQueueReaderConfig] = Map.empty,
-  defaultReaderConfig: JournaledQueueReaderConfig = new JournaledQueueReaderConfig()
-)
 
 class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
   private[this] val log = Logger.get(getClass)
