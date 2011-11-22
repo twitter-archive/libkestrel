@@ -281,6 +281,7 @@ class Journal(
               val oldFile = r.file
               r.file = file
               r.name = name
+              r.commit(0L)
               r.checkpoint()
               oldFile.delete()
               readerMap = readerMap - ""
@@ -371,6 +372,7 @@ class Journal(
     @volatile var file: File = _file
     @volatile var name: String = _name
     @volatile var haveReadState: Boolean = false
+    @volatile private[this] var dirty = true
 
     private[this] var _head = 0L
     private[this] val _doneSet = new ItemIdList()
@@ -400,6 +402,7 @@ class Journal(
      */
     def catchUp() {
       if (!haveReadState) head = _tailId
+      dirty = true
     }
 
     /**
@@ -410,13 +413,16 @@ class Journal(
       val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
       serialized {
-        log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
-        val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
-        val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
-        newJournalFile.readHead(_head)
-        newJournalFile.readDone(_doneSet.toSeq)
-        newJournalFile.close()
-        newFile.renameTo(file)
+        if (dirty) {
+          dirty = false
+          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
+          val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
+          val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
+          newJournalFile.readHead(_head)
+          newJournalFile.readDone(_doneSet.toSeq)
+          newJournalFile.close()
+          newFile.renameTo(file)
+        }
       }
     }
 
@@ -428,6 +434,7 @@ class Journal(
       _head = id
       val toRemove = _doneSet.toSeq.filter { _ <= _head }
       _doneSet.remove(toRemove.toSet)
+      dirty = true
     }
 
     def commit(id: Long) {
@@ -437,9 +444,10 @@ class Journal(
           _head += 1
           _doneSet.remove(_head)
         }
-      } else {
+      } else if (id > _head) {
         _doneSet.add(id)
       }
+      dirty = true
     }
 
     /**
@@ -449,6 +457,7 @@ class Journal(
       _head = _tailId
       _doneSet.popAll()
       endReadBehind()
+      dirty = true
     }
 
     def close() {

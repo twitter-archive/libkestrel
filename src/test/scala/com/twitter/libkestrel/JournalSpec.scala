@@ -181,6 +181,18 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
       ))
     }
 
+    it("doesn't checkpoint readers that haven't changed") {
+      val j = makeJournal("test")
+      j.reader("client1").commit(1L)
+      j.reader("client1").checkpoint()
+      assert(new File(testFolder, "test.read.client1").exists)
+
+      new File(testFolder, "test.read.client1").delete()
+      assert(!new File(testFolder, "test.read.client1").exists)
+      j.reader("client1").checkpoint()
+      assert(!new File(testFolder, "test.read.client1").exists)
+    }
+
     it("make new reader") {
       val j = makeJournal("test")
       var r = j.reader("new")
