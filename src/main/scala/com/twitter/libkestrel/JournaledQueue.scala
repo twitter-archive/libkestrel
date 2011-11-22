@@ -182,6 +182,12 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
     })
   }
 
+  def toDebug: String = {
+    "<JournaledQueue: name=%s items=%d bytes=%d journalBytes=%s readers=(%s)%s>".format(
+      config.name, items, bytes, journalBytes, readerMap.values.map { _.toDebug }.mkString(", "),
+      (if (closed) " closed" else ""))
+  }
+
   def toBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): BlockingQueue[A] = {
     val reader = JournaledQueue.this.reader("")
 
@@ -221,10 +227,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         throw new Exception("Unsupported operation")
       }
 
-      def toDebug: String = {
-        "<JournaledQueue: size=%d bytes=%d age=%s queue=%s>".format(
-          reader.items, reader.bytes, reader.age, reader.queue.toDebug)
-      }
+      def toDebug: String = JournaledQueue.this.toDebug
 
       def close() {
         JournaledQueue.this.close()
@@ -513,6 +516,11 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         j.checkpoint()()
         j.close()
       }
+    }
+
+    def toDebug: String = {
+      "<JournaledQueue#Reader: name=%s items=%d bytes=%d age=%s queue=%s>".format(
+        name, items, bytes, age, queue.toDebug)
     }
   }
 }
