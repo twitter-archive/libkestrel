@@ -160,6 +160,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   def size: Int = elementCount.get()
 
   /**
+   * Return the number of consumers waiting for an item.
+   */
+  def waiterCount: Int = waiterSet.size
+
+  /**
    * Get the next item from the queue, waiting forever if necessary.
    */
   def get(): Future[Option[A]] = get(None)
