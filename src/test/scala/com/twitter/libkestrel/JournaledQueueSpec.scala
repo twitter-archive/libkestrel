@@ -315,6 +315,24 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       ))
     }
 
+    it("re-delivers aborted reads") {
+      val q = makeQueue()
+      q.put("first".getBytes, Time.now, None)
+      q.put("second".getBytes, Time.now, None)
+
+      val reader = q.reader("")
+      val item1 = reader.get(None)()
+      assert(item1.isDefined)
+      assert(item1.get.id === 1)
+      assert(new String(item1.get.data) == "first")
+      reader.unget(1)
+
+      val item2 = reader.get(None)()
+      assert(item2.isDefined)
+      assert(item2.get.id === 1)
+      assert(new String(item2.get.data) == "first")
+    }
+
     it("can recover from stale checkpoints") {
       val q = makeQueue(config = config.copy(journalSize = 1.kilobyte))
       val reader = q.reader("")
