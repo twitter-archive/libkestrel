@@ -257,6 +257,10 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
 
     def writer: JournaledQueue = JournaledQueue.this
 
+    def fullname: String = {
+      if (name == "") config.name else (config.name + "+" + name)
+    }
+
     /*
      * in order to reload the contents of a queue at startup, we need to:
      *   - read the last saved state (head id, done ids)
