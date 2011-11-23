@@ -81,21 +81,6 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
   }
 
   /**
-   * Total number of items ever added to this queue.
-   */
-  val putCount = new AtomicLong(0)
-
-  /**
-   * Total number of items ever expired from any reader of this queue.
-   */
-  val expiredCount = new AtomicLong(0)
-
-  /**
-   * Total number of items ever discarded from any reader of this queue.
-   */
-  val discardedCount = new AtomicLong(0)
-
-  /**
    * Get the named reader. If this is a normal (single reader) queue, the default reader is named
    * "". If any named reader is created, the default reader is converted to that name and there is
    * no longer a default reader.
@@ -272,9 +257,30 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
 
-    // visibility into how many items (and bytes) are in open reads
+    /**
+     * Number of open (uncommitted) reads.
+     */
     def openItems = openReads.values.size
+
+    /**
+     * Byte count of open (uncommitted) reads.
+     */
     def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.data.size }
+
+    /**
+     * Total number of items ever added to this queue.
+     */
+    val putCount = new AtomicLong(0)
+
+    /**
+     * Total number of items ever expired from this queue.
+     */
+    val expiredCount = new AtomicLong(0)
+
+    /**
+     * Total number of items ever discarded from this queue.
+     */
+    val discardedCount = new AtomicLong(0)
 
     def waiterCount: Int = queue.waiterCount
 

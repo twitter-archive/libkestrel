@@ -367,7 +367,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(item.isDefined)
       assert(item.get.id === 2L)
       assert(reader.expired === 1)
-      assert(q.expiredCount.get === 1)
+      assert(reader.expiredCount.get === 1)
       q.close()
     }
 
@@ -538,7 +538,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(new String(item.get.data) === "hi")
-        assert(q.putCount.get === 1)
+        assert(reader.putCount.get === 1)
         q.close()
       }
 
@@ -558,8 +558,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(new String(item.get.data) === "scoot over")
-        assert(q.putCount.get === 2)
-        assert(q.discardedCount.get === 1)
+        assert(reader.putCount.get === 2)
+        assert(reader.discardedCount.get === 1)
         assert(reader.discarded === 1)
         q.close()
       }
