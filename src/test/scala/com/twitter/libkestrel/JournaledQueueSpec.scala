@@ -140,6 +140,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val reader = q.reader("")
       assert(reader.items === 0)
       assert(reader.bytes === 0)
+      assert(reader.memoryItems === 0)
       assert(reader.memoryBytes === 0)
       q.close()
     }
@@ -153,6 +154,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         assert(reader.items === 5)
         assert(reader.bytes === 5 * 1024)
+        assert(reader.memoryItems === 5)
         assert(reader.memoryBytes === 5 * 1024)
         val item = reader.get(None)()
         assert(item.isDefined)
@@ -171,6 +173,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
           assert(reader.items === 8 - readId)
           assert(reader.bytes === (8 - readId) * 1024)
+          assert(reader.memoryItems === 4)
           assert(reader.memoryBytes === 4 * 1024)
           q.close()
         }
@@ -184,6 +187,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         assert(reader.items === 0)
         assert(reader.bytes === 0L)
+        assert(reader.memoryItems === 0)
         assert(reader.memoryBytes === 0L)
         assert(reader.get(None)() == None)
         q.close()
@@ -199,6 +203,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       assert(reader.items === 8)
       assert(reader.bytes === 8 * 1024)
+      assert(reader.memoryItems === 4)
       assert(reader.memoryBytes === 4 * 1024)
 
       (1L to 8L).foreach { id =>
@@ -209,18 +214,21 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         assert(reader.items === 8 - id + 1)
         assert(reader.bytes === (8 - id + 1) * 1024)
+        assert(reader.memoryItems === ((8 - id + 1) min 4))
         assert(reader.memoryBytes === ((8 - id + 1) min 4) * 1024)
 
         reader.commit(item.get.id)
 
         assert(reader.items === 8 - id)
         assert(reader.bytes === (8 - id) * 1024)
+        assert(reader.memoryItems === ((8 - id) min 4))
         assert(reader.memoryBytes === ((8 - id) min 4) * 1024)
       }
 
       assert(reader.get(None)() === None)
       assert(reader.items === 0)
       assert(reader.bytes === 0)
+      assert(reader.memoryItems === 0)
       assert(reader.memoryBytes === 0)
       q.close()
     }
@@ -571,6 +579,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
           q.put(makeId(id, 1024), Time.now, None)
           assert(reader.items === id)
           assert(reader.bytes === 1024L * id)
+          assert(reader.memoryItems === (4 min id))
           assert(reader.memoryBytes === (4096L min (id * 1024)))
         }
         (1 to 8).foreach { id =>
@@ -581,6 +590,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
           reader.commit(item.get.id)
           assert(reader.items === (8 - id))
           assert(reader.bytes === 1024L * (8 - id))
+          assert(reader.memoryItems === (4 min (8 - id)))
           assert(reader.memoryBytes === (4096L min ((8 - id) * 1024)))
         }
         q.close()

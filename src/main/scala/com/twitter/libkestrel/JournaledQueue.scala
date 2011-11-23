@@ -250,6 +250,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
 
     @volatile var items = 0
     @volatile var bytes = 0L
+    @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
     @volatile var discarded = 0L
@@ -282,13 +283,20 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
      */
     val discardedCount = new AtomicLong(0)
 
+    /**
+     * Number of consumers waiting for an item to arrive.
+     */
     def waiterCount: Int = queue.waiterCount
 
-    def writer: JournaledQueue = JournaledQueue.this
-
+    /**
+     * FQDN for this reader, which is usually of the form "queue_name+reader_name", but will just
+     * be "queue_name" for the default reader.
+     */
     def fullname: String = {
       if (name == "") config.name else (config.name + "+" + name)
     }
+
+    def writer: JournaledQueue = JournaledQueue.this
 
     /*
      * in order to reload the contents of a queue at startup, we need to:
@@ -311,6 +319,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         lastId = item.id
         if (!inReadBehind) {
           queue.put(item)
+          memoryItems += 1
           memoryBytes += item.data.size
         }
         items += 1
@@ -376,6 +385,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
 
         if (!inReadBehind) {
           queue.put(item)
+          memoryItems += 1
           memoryBytes += item.data.size
         }
         items += 1
@@ -418,9 +428,10 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
       if (removedItems > 0) {
         serialized {
           items -= removedItems
-          expired += removedItems
           bytes -= removedBytes
+          memoryItems -= removedItems
           memoryBytes -= removedBytes
+          expired += removedItems
           journalReader.foreach { j =>
             removedIds.popAll().foreach { id =>
               j.commit(id)
@@ -440,6 +451,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         while (j.inReadBehind && memoryBytes < readerConfig.maxMemorySize.inBytes) {
           j.nextReadBehind().foreach { item =>
             queue.put(item)
+            memoryItems += 1
             memoryBytes += item.data.size
           }
         }
@@ -498,6 +510,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
       journalReader.foreach { _.commit(item.id) }
       items -= 1
       bytes -= item.data.size
+      memoryItems -= 1
       memoryBytes -= item.data.size
       if (items == 0) age = 0.milliseconds
       fillReadBehind()
@@ -539,6 +552,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         while (queue.poll().isDefined) { }
         items = 0
         bytes = 0
+        memoryItems = 0
         memoryBytes = 0
         age = 0.nanoseconds
       }
