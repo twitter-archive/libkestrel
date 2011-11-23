@@ -33,11 +33,15 @@ trait Codec[A] {
   def decode(data: Array[Byte]): A
 }
 
-class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) extends Serialized {
+class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
+  extends Serialized
+{
   private[this] val log = Logger.get(getClass)
 
   private[this] val NAME_REGEX = """[^A-Za-z0-9:_-]""".r
-  if (NAME_REGEX.findFirstIn(config.name).isDefined) throw new Exception("Illegal queue name: " + config.name)
+  if (NAME_REGEX.findFirstIn(config.name).isDefined) {
+    throw new Exception("Illegal queue name: " + config.name)
+  }
 
   private[this] val journal = if (config.journaled) {
     Some(new Journal(path, config.name, config.journalSize, timer, config.syncJournal,
@@ -77,6 +81,21 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   }
 
   /**
+   * Total number of items ever added to this queue.
+   */
+  val putCount = new AtomicLong(0)
+
+  /**
+   * Total number of items ever expired from any reader of this queue.
+   */
+  val expiredCount = new AtomicLong(0)
+
+  /**
+   * Total number of items ever discarded from any reader of this queue.
+   */
+  val discardedCount = new AtomicLong(0)
+
+  /**
    * Get the named reader. If this is a normal (single reader) queue, the default reader is named
    * "". If any named reader is created, the default reader is converted to that name and there is
    * no longer a default reader.
@@ -85,7 +104,9 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
     readerMap.get(name).getOrElse {
       synchronized {
         readerMap.get(name).getOrElse {
-          if (readerMap.size >= 1 && name == "") throw new Exception("Fanout queues don't have a default reader")
+          if (readerMap.size >= 1 && name == "") {
+            throw new Exception("Fanout queues don't have a default reader")
+          }
           val readerConfig = config.readerConfigs.get(name).getOrElse(config.defaultReaderConfig)
           log.info("Creating reader queue %s+%s", config.name, name)
           val reader = new Reader(name, readerConfig)
@@ -236,7 +257,9 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
   }
 
 
-  class Reader(private[libkestrel] var name: String, readerConfig: JournaledQueueReaderConfig) extends Serialized {
+  class Reader(private[libkestrel] var name: String, val readerConfig: JournaledQueueReaderConfig)
+    extends Serialized
+  {
     val journalReader = journal.map { _.reader(name) }
     private[libkestrel] val queue = ConcurrentBlockingQueue[QueueItem](timer)
 
@@ -326,7 +349,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
                (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
           queue.poll().foreach { item =>
-            readerConfig.incrDiscardedCount(this)
+            discardedCount.getAndIncrement()
             discarded += 1
             commitItem(item)
           }
@@ -351,7 +374,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
         }
         items += 1
         bytes += item.data.size
-        readerConfig.incrPutCount(this)
+        putCount.getAndIncrement()
       }
     }
 
@@ -378,7 +401,7 @@ class JournaledQueue(config: JournaledQueueConfig, path: File, timer: Timer) ext
       var item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
       while (item.isDefined && removedItems < max) {
         readerConfig.processExpiredItem(item.get)
-        readerConfig.incrExpiredCount(this)
+        expiredCount.getAndIncrement()
         removedItems += 1
         removedBytes += item.get.data.size
         removedIds.add(item.get.id)

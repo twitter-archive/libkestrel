@@ -27,22 +27,8 @@ import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import config._
 
 class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
-  class Counters {
-    val expired = new AtomicLong(0)
-    val discarded = new AtomicLong(0)
-    val put = new AtomicLong(0)
-  }
-  val counters = new Counters()
-
   val config = new JournaledQueueConfig(name = "test")
-
-  def makeReaderConfig() = {
-    new JournaledQueueReaderConfig(
-      incrExpiredCount = { _ => counters.expired.incrementAndGet() },
-      incrDiscardedCount = { _ => counters.discarded.incrementAndGet() },
-      incrPutCount = { _ => counters.put.incrementAndGet() }
-    )
-  }
+  def makeReaderConfig() = new JournaledQueueReaderConfig()
 
   val timer = new JavaTimer(isDaemon = true)
 
@@ -50,9 +36,6 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     config: JournaledQueueConfig = config,
     readerConfig: JournaledQueueReaderConfig = makeReaderConfig()
   ) = {
-    counters.expired.set(0L)
-    counters.discarded.set(0L)
-    counters.put.set(0L)
     new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer)
   }
 
@@ -384,7 +367,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(item.isDefined)
       assert(item.get.id === 2L)
       assert(reader.expired === 1)
-      assert(counters.expired.get === 1)
+      assert(q.expiredCount.get === 1)
       q.close()
     }
 
@@ -555,7 +538,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(new String(item.get.data) === "hi")
-        assert(counters.put.get === 1)
+        assert(q.putCount.get === 1)
         q.close()
       }
 
@@ -575,8 +558,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(new String(item.get.data) === "scoot over")
-        assert(counters.put.get === 2)
-        assert(counters.discarded.get === 1)
+        assert(q.putCount.get === 2)
+        assert(q.discardedCount.get === 1)
         assert(reader.discarded === 1)
         q.close()
       }

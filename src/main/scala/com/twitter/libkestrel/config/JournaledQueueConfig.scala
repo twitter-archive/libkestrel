@@ -45,13 +45,6 @@ import java.io.File
  *   used to implement special processing for expired items, such as moving them to another queue
  *   or writing them into a logfile.
  * @param maxExpireSweep Maximum number of expired items to process at once.
- * @param incrExpiredCount Function called whenever an item is expired. This is used by kestrel to
- *   track a global counter of all items expired across all queues.
- * @param incrDiscardedCount Function called whenever an item is discarded because the queue was
- *   full. This is used by kestrel to track a global counter of all items discarded across all
- *   queues.
- * @param incrPutCount Function called whenever an item is put into a queue. This is used by
- *   kestrel to track a global counter of all items enqueued into the server.
  */
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
@@ -60,12 +53,7 @@ case class JournaledQueueReaderConfig(
   maxAge: Option[Duration] = None,
   fullPolicy: ConcurrentBlockingQueue.FullPolicy = ConcurrentBlockingQueue.FullPolicy.RefusePuts,
   processExpiredItem: (QueueItem) => Unit = { _ => },
-  maxExpireSweep: Int = Int.MaxValue,
-
-  // counters
-  incrExpiredCount: (JournaledQueue#Reader) => Unit = { _ => },
-  incrDiscardedCount: (JournaledQueue#Reader) => Unit = { _ => },
-  incrPutCount: (JournaledQueue#Reader) => Unit = { _ => }
+  maxExpireSweep: Int = Int.MaxValue
 ) {
   override def toString() = {
     ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d").format(
