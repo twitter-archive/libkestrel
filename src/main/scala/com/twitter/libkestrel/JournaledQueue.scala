@@ -151,8 +151,8 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
   /**
    * Do a sweep of each reader, and discard any expired items.
    */
-  def discardExpired() = {
-    readerMap.values.foldLeft(0) { _ + _.discardExpired() }
+  def discardExpired() {
+    readerMap.values foreach { _.discardExpired() }
   }
 
   /**
@@ -220,16 +220,16 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         }
       }
 
-      def poll(): Option[A] = {
+      def poll(): Future[Option[A]] = {
         reader.get(None).map { optItem =>
           optItem.map { item =>
             reader.commit(item.id)
             codec.decode(item.data)
           }
-        }()
+        }
       }
 
-      def pollIf(predicate: A => Boolean): Option[A] = {
+      def pollIf(predicate: A => Boolean): Future[Option[A]] = {
         throw new Exception("Unsupported operation")
       }
 
@@ -356,20 +356,26 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         (items < readerConfig.maxItems && bytes < readerConfig.maxSize.inBytes)
     }
 
+    private[libkestrel] def dropOldest() {
+      if (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
+          (items > readerConfig.maxItems || bytes > readerConfig.maxSize.inBytes)) {
+        queue.poll() map { itemOption =>
+          itemOption foreach { item =>
+            serialized {
+              discardedCount.getAndIncrement()
+              discarded += 1
+              commitItem(item)
+              dropOldest()
+            }
+          }
+        }
+      }
+    }
+
     // this happens within the serialized block of a put.
     private[libkestrel] def put(item: QueueItem) {
       discardExpired()
       serialized {
-        // we've already checked canPut by here, but we may still drop the oldest item(s).
-        while (readerConfig.fullPolicy == ConcurrentBlockingQueue.FullPolicy.DropOldest &&
-               (items >= readerConfig.maxItems || bytes >= readerConfig.maxSize.inBytes)) {
-          queue.poll().foreach { item =>
-            discardedCount.getAndIncrement()
-            discarded += 1
-            commitItem(item)
-          }
-        }
-
         val inReadBehind = journalReader.map { j =>
           if (j.inReadBehind && item.id > j.readBehindId) {
             true
@@ -391,6 +397,9 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
         items += 1
         bytes += item.data.size
         putCount.getAndIncrement()
+
+        // we've already checked canPut by here, but we may still drop the oldest item(s).
+        dropOldest()
       }
     }
 
@@ -404,43 +413,29 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
       adjusted.isDefined && adjusted.get <= now
     }
 
-    def discardExpired(): Int = {
+    def discardExpired() {
       discardExpired(readerConfig.maxExpireSweep)
     }
 
     // check the in-memory portion of the queue and discard anything that's expired.
-    def discardExpired(max: Int): Int = {
-      val now = Time.now
-      var removedItems = 0
-      var removedBytes = 0
-      val removedIds = new ItemIdList()
-      var item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
-      while (item.isDefined && removedItems < max) {
-        readerConfig.processExpiredItem(item.get)
-        expiredCount.getAndIncrement()
-        removedItems += 1
-        removedBytes += item.get.data.size
-        removedIds.add(item.get.id)
-        if (removedItems < max) {
-          item = queue.pollIf { item => hasExpired(item.addTime, item.expireTime, now) }
-        }
-      }
-      if (removedItems > 0) {
-        serialized {
-          items -= removedItems
-          bytes -= removedBytes
-          memoryItems -= removedItems
-          memoryBytes -= removedBytes
-          expired += removedItems
-          journalReader.foreach { j =>
-            removedIds.popAll().foreach { id =>
-              j.commit(id)
-            }
+    def discardExpired(max: Int) {
+      if (max == 0) return
+      queue.pollIf { item => hasExpired(item.addTime, item.expireTime, Time.now) } map { itemOption =>
+        itemOption foreach { item =>
+          readerConfig.processExpiredItem(item)
+          expiredCount.getAndIncrement()
+          serialized {
+            items -= 1
+            bytes -= item.data.size
+            memoryItems -= 1
+            memoryBytes -= item.data.size
+            expired += 1
+            journalReader.foreach { _.commit(item.id) }
+            fillReadBehind()
           }
-          fillReadBehind()
+          discardExpired(max - 1)
         }
       }
-      removedItems
     }
 
     // if we're in read-behind mode, scan forward in the journal to keep memory as full as
@@ -469,7 +464,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
       discardExpired()
       val future = deadline match {
         case Some(d) => queue.get(d)
-        case None => Future.value(queue.poll())
+        case None => queue.poll()
       }
       future.flatMap { optItem =>
         optItem match {
@@ -549,12 +544,22 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
           j.flush()
           j.checkpoint()
         }
-        while (queue.poll().isDefined) { }
-        items = 0
-        bytes = 0
-        memoryItems = 0
-        memoryBytes = 0
-        age = 0.nanoseconds
+        queue.poll() map { itemOption =>
+          itemOption match {
+            case Some(item) => {
+              flush()
+            }
+            case None => {
+              serialized {
+                items = 0
+                bytes = 0
+                memoryItems = 0
+                memoryBytes = 0
+                age = 0.nanoseconds
+              }
+            }
+          }
+        }
       }
     }
 

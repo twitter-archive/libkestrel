@@ -24,8 +24,8 @@ trait BlockingQueue[A <: AnyRef] {
   def size: Int
   def get(): Future[Option[A]]
   def get(deadline: Time): Future[Option[A]]
-  def poll(): Option[A]
-  def pollIf(predicate: A => Boolean): Option[A]
+  def poll(): Future[Option[A]]
+  def pollIf(predicate: A => Boolean): Future[Option[A]]
   def toDebug: String
   def close()
 }

@@ -108,7 +108,7 @@ object FloodTest extends LoadTesting {
           while (deadline > Time.now || queue.size > 0 || !writersDone()) {
             val item = if (random() % 100 < pollPercent) {
               polls += 1
-              queue.poll()
+              queue.poll()()
             } else {
               queue.get(1.millisecond.fromNow)()
             }
