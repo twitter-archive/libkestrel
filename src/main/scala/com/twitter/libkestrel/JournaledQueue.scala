@@ -149,6 +149,13 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
   }
 
   /**
+   * Erase any items in any reader queue.
+   */
+  def flush() {
+    readerMap.values.foreach { _.flush() }
+  }
+
+  /**
    * Do a sweep of each reader, and discard any expired items.
    */
   def discardExpired() {
@@ -231,6 +238,10 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
 
       def pollIf(predicate: A => Boolean): Future[Option[A]] = {
         throw new Exception("Unsupported operation")
+      }
+
+      def flush() {
+        JournaledQueue.this.flush()
       }
 
       def toDebug: String = JournaledQueue.this.toDebug
@@ -538,35 +549,26 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
     /**
      * Drain all items from this reader.
      */
-    def flush() {
+    def flush(): Future[Unit] = {
       serialized {
         journalReader.foreach { j =>
           j.flush()
           j.checkpoint()
         }
-        queue.poll() map { itemOption =>
-          itemOption match {
-            case Some(item) => {
-              flush()
-            }
-            case None => {
-              serialized {
-                items = 0
-                bytes = 0
-                memoryItems = 0
-                memoryBytes = 0
-                age = 0.nanoseconds
-              }
-            }
-          }
-        }
+        queue.flush()
+        items = 0
+        bytes = 0
+        memoryItems = 0
+        memoryBytes = 0
+        age = 0.nanoseconds
       }
     }
 
     def close() {
       journalReader.foreach { j =>
-        j.checkpoint()()
-        j.close()
+        j.checkpoint() respond {
+          case _ => j.close()
+        }
       }
     }
 

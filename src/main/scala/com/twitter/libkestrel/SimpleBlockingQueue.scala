@@ -86,6 +86,12 @@ final class SimpleBlockingQueue[A <: AnyRef](
     }
   }
 
+  def flush() {
+    synchronized {
+      queue.clear()
+    }
+  }
+
   def toDebug: String = {
     synchronized {
       "<SimpleBlockingQueue size=%d waiters=%d>".format(queue.size, waiters.size)

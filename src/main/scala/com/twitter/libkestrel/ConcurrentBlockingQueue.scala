@@ -194,6 +194,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
+  def flush() {
+    queue.clear()
+    headQueue.clear()
+  }
+
   private def get(deadline: Option[Time]): Future[Option[A]] = {
     val promise = new Promise[Option[A]]
     waiterSet.put(promise, promise)
