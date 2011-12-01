@@ -60,7 +60,7 @@ final class SimpleBlockingQueue[A <: AnyRef](
   }
 
   private def waitFor(promise: Promise[Option[A]], deadline: Time) {
-    val item = poll()
+    val item = poll()()
     item match {
       case s @ Some(x) => promise.setValue(s)
       case None => {
@@ -74,15 +74,21 @@ final class SimpleBlockingQueue[A <: AnyRef](
     }
   }
 
-  def poll(): Option[A] = {
+  def poll(): Future[Option[A]] = {
     synchronized {
-      if (queue.isEmpty) None else Some(queue.dequeue())
+      Future.value(if (queue.isEmpty) None else Some(queue.dequeue()))
     }
   }
 
-  def pollIf(predicate: A => Boolean): Option[A] = {
+  def pollIf(predicate: A => Boolean): Future[Option[A]] = {
     synchronized {
-      if (queue.isEmpty || !predicate(queue.head)) None else Some(queue.dequeue())
+      Future.value(if (queue.isEmpty || !predicate(queue.head)) None else Some(queue.dequeue()))
+    }
+  }
+
+  def flush() {
+    synchronized {
+      queue.clear()
     }
   }
 

@@ -59,6 +59,15 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     data
   }
 
+  def eventually(f: => Boolean): Boolean = {
+    val deadline = 5.seconds.fromNow
+    while (deadline > Time.now) {
+      if (f) return true
+      Thread.sleep(10)
+    }
+    false
+  }
+
   def setupWriteJournals(itemsPerJournal: Int, journals: Int, expiredItems: Int = 0) {
     var id = 1L
     (0 until journals).foreach { journalId =>
@@ -374,7 +383,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val item = reader.get(None)()
       assert(item.isDefined)
       assert(item.get.id === 2L)
-      assert(reader.expired === 1)
+      assert(eventually(reader.expired == 1))
       assert(reader.expiredCount.get === 1)
       q.close()
     }
@@ -561,7 +570,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(reader.items === 1)
 
         q.put("scoot over".getBytes, Time.now, None)
-        assert(reader.items === 1)
+        assert(eventually(reader.items == 1))
 
         val item = reader.get(None)()
         assert(item.isDefined)

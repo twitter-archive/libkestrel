@@ -177,21 +177,26 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue if one is immediately available.
    */
-  def poll(): Option[A] = pollIf(truth)
+  def poll(): Future[Option[A]] = pollIf(truth)
 
   /**
    * Get the next item from the queue if it satisfies a predicate.
    */
-  def pollIf(predicate: A => Boolean): Option[A] = {
+  def pollIf(predicate: A => Boolean): Future[Option[A]] = {
     if (queue.isEmpty && headQueue.isEmpty) {
-      None
+      Future.value(None)
     } else {
       val promise = new Promise[Option[A]]
       pollerSet.put(promise, promise)
       consumers.add(Poller(promise, predicate))
       handoff()
-      promise()
+      promise
     }
+  }
+
+  def flush() {
+    queue.clear()
+    headQueue.clear()
   }
 
   private def get(deadline: Option[Time]): Future[Option[A]] = {
@@ -275,7 +280,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   }
 
   def toDebug: String = {
-    "<ConcurrentBlockingQueue size=%d waiters=%d/%d/%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
+    "<ConcurrentBlockingQueue size=%d waiters=%d get=%d poll=%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
   }
 
   def close() {

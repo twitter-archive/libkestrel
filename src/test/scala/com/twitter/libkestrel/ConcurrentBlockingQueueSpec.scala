@@ -14,15 +14,6 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
     def newQueue(maxItems: Int, fullPolicy: ConcurrentBlockingQueue.FullPolicy): BlockingQueue[String]
   }
 
-  def eventually(f: => Boolean): Boolean = {
-    val deadline = 5.seconds.fromNow
-    while (deadline > Time.now) {
-      if (f) return true
-      Thread.sleep(10)
-    }
-    false
-  }
-
   def tests(builder: QueueBuilder) {
     import builder._
 
@@ -42,26 +33,26 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
     it("poll items") {
       val queue = newQueue()
       assert(queue.size === 0)
-      assert(queue.poll() === None)
+      assert(queue.poll()() === None)
       assert(queue.put("first"))
       assert(queue.size === 1)
-      assert(queue.poll() === Some("first"))
-      assert(queue.poll() === None)
+      assert(queue.poll()() === Some("first"))
+      assert(queue.poll()() === None)
     }
 
     it("conditionally poll items") {
       val queue = newQueue()
       assert(queue.size === 0)
-      assert(queue.poll() === None)
+      assert(queue.poll()() === None)
       assert(queue.put("first") === true)
       assert(queue.put("second") === true)
       assert(queue.put("third") === true)
       assert(queue.size === 3)
-      assert(queue.pollIf(_ contains "t") === Some("first"))
-      assert(queue.pollIf(_ contains "t") === None)
-      assert(queue.pollIf(_ contains "c") === Some("second"))
-      assert(queue.pollIf(_ contains "t") === Some("third"))
-      assert(queue.pollIf(_ contains "t") === None)
+      assert(queue.pollIf(_ contains "t")() === Some("first"))
+      assert(queue.pollIf(_ contains "t")() === None)
+      assert(queue.pollIf(_ contains "c")() === Some("second"))
+      assert(queue.pollIf(_ contains "t")() === Some("third"))
+      assert(queue.pollIf(_ contains "t")() === None)
     }
 
     describe("putHead") {
@@ -92,7 +83,7 @@ class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFold
         assert(queue.size === 0)
         queue.putHead("foo")
         assert(queue.size === 1)
-        assert(queue.poll() == Some("foo"))
+        assert(queue.poll()() == Some("foo"))
         assert(queue.size === 0)
       }
     }
