@@ -473,18 +473,23 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
     def get(deadline: Option[Time]): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
       discardExpired()
+      val startTime = Time.now
       val future = deadline match {
         case Some(d) => queue.get(d)
         case None => queue.poll()
       }
       future.flatMap { optItem =>
         optItem match {
-          case None => Future.value(None)
+          case None => {
+            readerConfig.timeoutLatency(Time.now - startTime)
+            Future.value(None)
+          }
           case s @ Some(item) => {
             if (hasExpired(item.addTime, item.expireTime, Time.now)) {
               // try again.
               get(deadline)
             } else {
+              readerConfig.deliveryLatency(Time.now - item.addTime)
               age = Time.now - item.addTime
               openReads.put(item.id, item)
               Future.value(s)

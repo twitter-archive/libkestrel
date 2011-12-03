@@ -53,7 +53,9 @@ case class JournaledQueueReaderConfig(
   maxAge: Option[Duration] = None,
   fullPolicy: ConcurrentBlockingQueue.FullPolicy = ConcurrentBlockingQueue.FullPolicy.RefusePuts,
   processExpiredItem: (QueueItem) => Unit = { _ => },
-  maxExpireSweep: Int = Int.MaxValue
+  maxExpireSweep: Int = Int.MaxValue,
+  deliveryLatency: Duration => Unit = { _ => },
+  timeoutLatency: Duration => Unit = { _ => }
 ) {
   override def toString() = {
     ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d").format(
