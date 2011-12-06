@@ -5,6 +5,7 @@ import com.twitter.conversions.storage._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileOutputStream, IOException}
+import java.util.concurrent.ScheduledExecutorService
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
@@ -20,15 +21,21 @@ object Journal {
     }.toSet
   }
 
-  def builder(queuePath: File, timer: Timer, syncJournal: Duration, saveArchivedJournals: Option[File]) = {
+  def builder(
+    queuePath: File, scheduler: ScheduledExecutorService, syncJournal: Duration,
+    saveArchivedJournals: Option[File]
+  ) = {
     (queueName: String, maxFileSize: StorageUnit) => {
-      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal, saveArchivedJournals)
+      new Journal(queuePath, queueName, maxFileSize, scheduler, syncJournal, saveArchivedJournals)
     }
   }
 
-  def builder(queuePath: File, maxFileSize: StorageUnit, timer: Timer, syncJournal: Duration, saveArchivedJournals: Option[File]) = {
+  def builder(
+    queuePath: File, maxFileSize: StorageUnit, scheduler: ScheduledExecutorService,
+    syncJournal: Duration, saveArchivedJournals: Option[File]
+  ) = {
     (queueName: String) => {
-      new Journal(queuePath, queueName, maxFileSize, timer, syncJournal, saveArchivedJournals)
+      new Journal(queuePath, queueName, maxFileSize, scheduler, syncJournal, saveArchivedJournals)
     }
   }
 }
@@ -43,7 +50,7 @@ class Journal(
   queuePath: File,
   queueName: String,
   maxFileSize: StorageUnit,
-  timer: Timer,
+  scheduler: ScheduledExecutorService,
   syncJournal: Duration,
   saveArchivedJournals: Option[File]
 ) extends Serialized {
@@ -154,7 +161,7 @@ class Journal(
     var items = 0
     var bytes = 0L
     val journalFile = try {
-      JournalFile.openWriter(file, timer, syncJournal)
+      JournalFile.openWriter(file, scheduler, syncJournal)
     } catch {
       case e: IOException => {
         log.error(e, "Unable to open journal %s; aborting!", file)
@@ -206,7 +213,7 @@ class Journal(
     if (idMap.size > 0) {
       val (id, fileInfo) = idMap.last
       try {
-        _journalFile = JournalFile.append(fileInfo.file, timer, syncJournal)
+        _journalFile = JournalFile.append(fileInfo.file, scheduler, syncJournal)
         _tailId = fileInfo.tailId
         currentItems = fileInfo.items
         currentBytes = fileInfo.bytes
@@ -262,7 +269,7 @@ class Journal(
       log.info("Rotating %s from %s (%s) to %s", queueName, _journalFile.file,
         _journalFile.position.bytes.toHuman, newFile)
     }
-    _journalFile = JournalFile.createWriter(newFile, timer, syncJournal)
+    _journalFile = JournalFile.createWriter(newFile, scheduler, syncJournal)
     currentItems = 0
     currentBytes = 0
     idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
@@ -347,7 +354,9 @@ class Journal(
     Future.join(futures.toSeq)
   }
 
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time], f: QueueItem => Unit = { _ => }): Future[(QueueItem, Future[Unit])] = {
+  def put(
+    data: Array[Byte], addTime: Time, expireTime: Option[Time], f: QueueItem => Unit = { _ => }
+  ): Future[(QueueItem, Future[Unit])] = {
     serialized {
       _tailId += 1
       val id = _tailId
@@ -379,7 +388,7 @@ class Journal(
     private[this] var readBehind: Option[Scanner] = None
 
     def readState() {
-      val journalFile = JournalFile.openReader(file, timer, syncJournal)
+      val journalFile = JournalFile.openReader(file, scheduler, syncJournal)
       try {
         journalFile.foreach { entry =>
           entry match {
@@ -417,7 +426,7 @@ class Journal(
           dirty = false
           log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
           val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
-          val newJournalFile = JournalFile.createReader(newFile, timer, syncJournal)
+          val newJournalFile = JournalFile.createReader(newFile, scheduler, syncJournal)
           newJournalFile.readHead(_head)
           newJournalFile.readDone(_doneSet.toSeq)
           newJournalFile.close()
@@ -505,7 +514,7 @@ class Journal(
 
       def start() {
         val fileInfo = fileInfoForId(startId).getOrElse { idMap(earliestHead) }
-        val jf = JournalFile.openWriter(fileInfo.file, timer, syncJournal)
+        val jf = JournalFile.openWriter(fileInfo.file, scheduler, syncJournal)
         if (startId >= earliestHead) {
           var lastId = -1L
           while (lastId < startId) {
@@ -537,7 +546,7 @@ class Journal(
               val fileInfo = fileInfoForId(id + 1)
               if (!fileInfo.isDefined) throw new IOException("Unknown id")
               if (logIt) log.debug("Read-behind for %s+%s moving to: %s", queueName, name, fileInfo.get.file)
-              journalFile = JournalFile.openWriter(fileInfo.get.file, timer, syncJournal)
+              journalFile = JournalFile.openWriter(fileInfo.get.file, scheduler, syncJournal)
               next()
             } else {
               end()

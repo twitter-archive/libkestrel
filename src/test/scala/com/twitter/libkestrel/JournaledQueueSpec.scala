@@ -21,6 +21,7 @@ import com.twitter.conversions.time._
 import com.twitter.util._
 import java.io._
 import java.nio.{ByteBuffer, ByteOrder}
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
@@ -31,12 +32,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 
   val timer = new JavaTimer(isDaemon = true)
+  val scheduler = new ScheduledThreadPoolExecutor(1)
 
   def makeQueue(
     config: JournaledQueueConfig = config,
     readerConfig: JournaledQueueReaderConfig = makeReaderConfig()
   ) = {
-    new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer)
+    new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer, scheduler)
   }
 
   def haveId(id: Long) = new Matcher[Array[Byte]]() {
