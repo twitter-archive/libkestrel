@@ -63,6 +63,8 @@ class JournaledQueue(
   // checkpoint readers on a schedule.
   timer.schedule(config.checkpointTimer) { checkpoint() }
 
+  def readers = readerMap.values
+
   /**
    * Total number of items across every reader queue being fed by this queue.
    */
