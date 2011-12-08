@@ -21,6 +21,7 @@ import com.twitter.util._
 import java.io.{File, FileInputStream, IOException}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.nio.channels.FileChannel
+import java.util.concurrent.ScheduledExecutorService
 
 case class CorruptedJournalException(lastValidPosition: Long, file: File, message: String) extends IOException(message)
 
@@ -58,32 +59,32 @@ object JournalFile {
     }
   }
 
-  def append(file: File, timer: Timer, syncJournal: Duration) = {
-    val journal = new JournalFile(file, timer, syncJournal)
+  def append(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
+    val journal = new JournalFile(file, scheduler, syncJournal)
     journal.openForAppend()
     journal
   }
 
-  def createWriter(file: File, timer: Timer, syncJournal: Duration) = {
-    val journal = new JournalFile(file, timer, syncJournal)
+  def createWriter(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
+    val journal = new JournalFile(file, scheduler, syncJournal)
     journal.create(HEADER_WRITER)
     journal
   }
 
-  def createReader(file: File, timer: Timer, syncJournal: Duration) = {
-    val journal = new JournalFile(file, timer, syncJournal)
+  def createReader(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
+    val journal = new JournalFile(file, scheduler, syncJournal)
     journal.create(HEADER_READER)
     journal
   }
 
-  def openWriter(file: File, timer: Timer, syncJournal: Duration) = {
-    val journal = new JournalFile(file, timer, syncJournal)
+  def openWriter(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
+    val journal = new JournalFile(file, scheduler, syncJournal)
     if (journal.openForRead() != HEADER_WRITER) throw new IOException("Not a writer journal file")
     journal
   }
 
-  def openReader(file: File, timer: Timer, syncJournal: Duration) = {
-    val journal = new JournalFile(file, timer, syncJournal)
+  def openReader(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
+    val journal = new JournalFile(file, scheduler, syncJournal)
     if (journal.openForRead() != HEADER_READER) throw new IOException("Not a reader journal file")
     journal
   }
@@ -98,7 +99,7 @@ object JournalFile {
   }
 }
 
-class JournalFile(val file: File, timer: Timer, syncJournal: Duration)
+class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJournal: Duration)
   extends Iterable[JournalFile.Record]
 {
   import JournalFile._
@@ -107,7 +108,7 @@ class JournalFile(val file: File, timer: Timer, syncJournal: Duration)
   private[this] var reader: FileChannel = null
 
   def openForAppend() {
-    writer = new PeriodicSyncFile(file, timer, syncJournal)
+    writer = new PeriodicSyncFile(file, scheduler, syncJournal)
   }
 
   def openForRead() = {
@@ -125,7 +126,7 @@ class JournalFile(val file: File, timer: Timer, syncJournal: Duration)
   }
 
   def create(header: Int) {
-    writer = new PeriodicSyncFile(file, timer, syncJournal)
+    writer = new PeriodicSyncFile(file, scheduler, syncJournal)
     writer.position = 0
     writer.truncate()
     val b = buffer(4)

@@ -22,7 +22,7 @@ import com.twitter.conversions.time._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService}
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.immutable
 import scala.collection.JavaConverters._
@@ -33,9 +33,9 @@ trait Codec[A] {
   def decode(data: Array[Byte]): A
 }
 
-class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
-  extends Serialized
-{
+class JournaledQueue(
+  val config: JournaledQueueConfig, path: File, timer: Timer, scheduler: ScheduledExecutorService
+) extends Serialized {
   private[this] val log = Logger.get(getClass)
 
   private[this] val NAME_REGEX = """[^A-Za-z0-9:_-]""".r
@@ -44,7 +44,7 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
   }
 
   private[this] val journal = if (config.journaled) {
-    Some(new Journal(path, config.name, config.journalSize, timer, config.syncJournal,
+    Some(new Journal(path, config.name, config.journalSize, scheduler, config.syncJournal,
       config.saveArchivedJournals))
   } else {
     None
@@ -473,18 +473,23 @@ class JournaledQueue(val config: JournaledQueueConfig, path: File, timer: Timer)
     def get(deadline: Option[Time]): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
       discardExpired()
+      val startTime = Time.now
       val future = deadline match {
         case Some(d) => queue.get(d)
         case None => queue.poll()
       }
       future.flatMap { optItem =>
         optItem match {
-          case None => Future.value(None)
+          case None => {
+            readerConfig.timeoutLatency(Time.now - startTime)
+            Future.value(None)
+          }
           case s @ Some(item) => {
             if (hasExpired(item.addTime, item.expireTime, Time.now)) {
               // try again.
               get(deadline)
             } else {
+              readerConfig.deliveryLatency(Time.now - item.addTime)
               age = Time.now - item.addTime
               openReads.put(item.id, item)
               Future.value(s)
