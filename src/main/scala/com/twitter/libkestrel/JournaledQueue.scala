@@ -488,7 +488,7 @@ class JournaledQueue(
       future.flatMap { optItem =>
         optItem match {
           case None => {
-            readerConfig.timeoutLatency(Time.now - startTime)
+            readerConfig.timeoutLatency(this, Time.now - startTime)
             Future.value(None)
           }
           case s @ Some(item) => {
@@ -496,7 +496,7 @@ class JournaledQueue(
               // try again.
               get(deadline)
             } else {
-              readerConfig.deliveryLatency(Time.now - item.addTime)
+              readerConfig.deliveryLatency(this, Time.now - item.addTime)
               age = Time.now - item.addTime
               openReads.put(item.id, item)
               Future.value(s)
