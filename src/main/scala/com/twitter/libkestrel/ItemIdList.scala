@@ -95,6 +95,8 @@ class ItemIdList {
 
   def compact() { compact(0, head) }
 
+  override def toString() = "<ItemIdList: %s>".format(toSeq.sorted)
+
   @tailrec
   private[this] def compact(start: Int, h1: Int) {
     if (h1 == tail) {

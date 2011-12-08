@@ -578,8 +578,8 @@ class JournaledQueue(
     }
 
     def toDebug: String = {
-      "<JournaledQueue#Reader: name=%s items=%d bytes=%d age=%s queue=%s>".format(
-        name, items, bytes, age, queue.toDebug)
+      "<JournaledQueue#Reader: name=%s items=%d bytes=%d mem_items=%d mem_bytes=%d age=%s queue=%s open=%s>".format(
+        name, items, bytes, memoryItems, memoryBytes, age, queue.toDebug, openReads.keys.asScala.toList.sorted)
     }
   }
 }
