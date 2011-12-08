@@ -401,7 +401,7 @@ class Journal(
         journalFile.close()
       }
       _head = (_head min _tailId) max (earliestHead - 1)
-      _doneSet.retain { id => id < _tailId && id > _head }
+      _doneSet.retain { id => id <= _tailId && id > _head }
       haveReadState = true
       log.debug("Read checkpoint %s+%s: head=%s done=(%s)", queueName, name, _head, _doneSet.toSeq.sorted.mkString(","))
     }
