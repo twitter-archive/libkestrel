@@ -390,11 +390,12 @@ class JournaledQueue(
       discardExpired()
       serialized {
         val inReadBehind = journalReader.map { j =>
+          // if item.id <= j.readBehindId, fillReadBehind already saw this item.
           if (j.inReadBehind && item.id > j.readBehindId) {
             true
           } else if (!j.inReadBehind && memoryBytes >= readerConfig.maxMemorySize.inBytes) {
-            log.info("Dropping to read-behind for queue '%s+%s' (%s)", config.name, name,
-              bytes.bytes.toHuman)
+            log.info("Dropping to read-behind for queue '%s+%s' (%s) @ item %d",
+              config.name, name, bytes.bytes.toHuman, item.id - 1)
             j.startReadBehind(item.id - 1)
             true
           } else {
@@ -457,10 +458,14 @@ class JournaledQueue(
     private[this] def fillReadBehind() {
       journalReader.foreach { j =>
         while (j.inReadBehind && memoryBytes < readerConfig.maxMemorySize.inBytes) {
-          j.nextReadBehind().foreach { item =>
-            queue.put(item)
-            memoryItems += 1
-            memoryBytes += item.data.size
+          if (bytes < readerConfig.maxMemorySize.inBytes) {
+            j.endReadBehind()
+          } else {
+            j.nextReadBehind().foreach { item =>
+              queue.put(item)
+              memoryItems += 1
+              memoryBytes += item.data.size
+            }
           }
         }
       }

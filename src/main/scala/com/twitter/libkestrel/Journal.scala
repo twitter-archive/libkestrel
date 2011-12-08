@@ -419,17 +419,17 @@ class Journal(
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
     def checkpoint(): Future[Unit] = {
-      val head = _head
-      val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
       serialized {
         if (dirty) {
           dirty = false
-          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
+          val head = _head
+          val doneSet = _doneSet
+          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.toSeq.sorted.mkString(","))
           val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
           val newJournalFile = JournalFile.createReader(newFile, scheduler, syncJournal)
-          newJournalFile.readHead(_head)
-          newJournalFile.readDone(_doneSet.toSeq)
+          newJournalFile.readHead(head)
+          newJournalFile.readDone(doneSet.toSeq.sorted)
           newJournalFile.close()
           newFile.renameTo(file)
         }
