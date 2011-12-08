@@ -280,7 +280,8 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   }
 
   def toDebug: String = {
-    "<ConcurrentBlockingQueue size=%d waiters=%d get=%d poll=%d>".format(elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
+    "<ConcurrentBlockingQueue size=%d waiters=%d get=%d poll=%d>".format(
+      elementCount.get, consumers.size, waiterSet.size, pollerSet.size)
   }
 
   def close() {

@@ -384,7 +384,7 @@ class Journal(
     @volatile private[this] var dirty = true
 
     private[this] var _head = 0L
-    private[this] val _doneSet = new ItemIdList()
+    private[this] val _doneSet = new mutable.HashSet[Long]
     private[this] var readBehind: Option[Scanner] = None
 
     def readState() {
@@ -393,15 +393,16 @@ class Journal(
         journalFile.foreach { entry =>
           entry match {
             case JournalFile.Record.ReadHead(id) => _head = id
-            case JournalFile.Record.ReadDone(ids) => _doneSet.add(ids.filter { _ <= _tailId })
+            case JournalFile.Record.ReadDone(ids) => _doneSet ++= ids
             case x => log.warning("Skipping unknown entry %s in read journal: %s", x, file)
           }
         }
       } finally {
         journalFile.close()
       }
-      haveReadState = true
       _head = (_head min _tailId) max (earliestHead - 1)
+      _doneSet.retain { id => id <= _tailId && id > _head }
+      haveReadState = true
       log.debug("Read checkpoint %s+%s: head=%s done=(%s)", queueName, name, _head, _doneSet.toSeq.sorted.mkString(","))
     }
 
@@ -418,17 +419,17 @@ class Journal(
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
     def checkpoint(): Future[Unit] = {
-      val head = _head
-      val doneSet = _doneSet.toSeq
       // FIXME really this should go in another thread. doesn't need to happen inline.
       serialized {
         if (dirty) {
           dirty = false
-          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.sorted.mkString(","))
+          val head = _head
+          val doneSet = _doneSet
+          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.toSeq.sorted.mkString(","))
           val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
           val newJournalFile = JournalFile.createReader(newFile, scheduler, syncJournal)
-          newJournalFile.readHead(_head)
-          newJournalFile.readDone(_doneSet.toSeq)
+          newJournalFile.readHead(head)
+          newJournalFile.readDone(doneSet.toSeq.sorted)
           newJournalFile.close()
           newFile.renameTo(file)
         }
@@ -441,8 +442,7 @@ class Journal(
 
     def head_=(id: Long) {
       _head = id
-      val toRemove = _doneSet.toSeq.filter { _ <= _head }
-      _doneSet.remove(toRemove.toSet)
+      _doneSet.retain { _ > head }
       dirty = true
     }
 
@@ -464,7 +464,7 @@ class Journal(
      */
     def flush() {
       _head = _tailId
-      _doneSet.popAll()
+      _doneSet.clear()
       endReadBehind()
       dirty = true
     }

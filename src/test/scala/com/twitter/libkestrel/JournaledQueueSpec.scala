@@ -75,10 +75,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     (0 until journals).foreach { journalId =>
       val jf = JournalFile.createWriter(new File(testFolder, "test." + journalId), null, Duration.MaxValue)
       (0 until itemsPerJournal).foreach { n =>
-        val x = new Array[Byte](1024)
-        val buffer = ByteBuffer.wrap(x)
-        buffer.order(ByteOrder.BIG_ENDIAN)
-        buffer.putLong(id)
+        val x = makeId(id, 1024)
         if (id <= expiredItems) {
           jf.put(QueueItem(id, 10.seconds.ago, Some(5.seconds.ago), x))
         } else {
@@ -203,6 +200,56 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(reader.get(None)() == None)
         q.close()
       }
+    }
+
+    it("moves into and then out of read-behind") {
+      setupWriteJournals(0, 0)
+      setupReadJournal("", 0)
+      val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
+      val q = makeQueue(readerConfig = readerConfig)
+      val reader = q.reader("")
+
+      assert(reader.items === 0)
+      assert(reader.bytes === 0)
+      assert(reader.memoryItems === 0)
+      assert(reader.memoryBytes === 0)
+
+      (1L to 50L).foreach { id =>
+        q.put(makeId(id, 1024), Time.now, None)
+
+        assert(reader.items === (id min 6))
+        assert(reader.bytes === ((id min 6) * 1024))
+        assert(reader.memoryItems === (id min 4))
+        assert(reader.memoryBytes === ((id min 4) * 1024))
+
+        if (id > 5) {
+          val item = reader.get(None)()
+          assert(item.isDefined)
+          item.get.data should haveId(id - 5)
+          assert(item.get.id == id - 5)
+          reader.commit(item.get.id)
+        }
+
+        assert(reader.items === (id min 5))
+        assert(reader.bytes === ((id min 5) * 1024))
+        assert(reader.memoryItems === (id min 4))
+        assert(reader.memoryBytes === ((id min 4) * 1024))
+      }
+
+      (1L to 5L).foreach { id =>
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        item.get.data should haveId(id + 45)
+        assert(item.get.id == id + 45)
+        reader.commit(item.get.id)
+
+        assert(reader.items === 5 - id)
+        assert(reader.bytes === (5 - id) * 1024)
+        assert(reader.memoryItems === 5 - id)
+        assert(reader.memoryBytes === (5 - id) * 1024)
+      }
+
+      q.close()
     }
 
     it("fills read-behind as items are removed") {
