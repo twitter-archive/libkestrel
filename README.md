@@ -48,6 +48,7 @@ blocked.
 A JournaledQueue is an optionally-journaled queue built on top of
 `ConcurrentBlockingQueue` that may have multiple "readers", each of which may
 have multiple consumers.
+
 ### Puts
 
 When an item is added to a queue, it's journaled and passed on to any readers.
@@ -143,5 +144,3 @@ which will list the available tests. Each test responds to "`--help`".
 - Nick suggested that writing all of the readers into the same file could
   reduce disk I/O by writing fewer blocks during reader checkpointing.
 
-- The periodic fsync is directly copied from kestrel, so it has the same
-  scaling problems Stephan is poking at.
