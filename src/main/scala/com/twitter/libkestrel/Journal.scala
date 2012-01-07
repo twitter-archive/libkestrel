@@ -62,6 +62,10 @@ class Journal(
   @volatile var readerMap = immutable.Map.empty[String, Reader]
 
   @volatile private[this] var _journalFile: JournalFile = null
+
+  // last item added to the journal.
+  // in theory, we should support rollover, but given 63 bits of ID space, even if a queue is
+  // handling 1M items/second, it doesn't need to support rollover for about 200,000 years.
   @volatile private[this] var _tailId = 0L
 
   // items & bytes in the current journal file so far:
