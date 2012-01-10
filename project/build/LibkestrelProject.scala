@@ -35,4 +35,9 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
     }
   lazy val packageLoadTests = packageLoadTestsAction
   override def packageDistTask = packageLoadTestsAction && super.packageDistTask
+
+  lazy val mytest = task { args =>
+    val myargs = List("-p", "target/test-classes", "-r", "com.twitter.libkestrel.MyReporter")
+    runTask(Some("org.scalatest.tools.Runner"), testClasspath, args ++ myargs).dependsOn(testCompile)
+  } describedAs "yes"
 }
