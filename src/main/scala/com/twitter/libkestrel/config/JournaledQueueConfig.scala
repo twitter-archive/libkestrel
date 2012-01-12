@@ -104,5 +104,11 @@ case class JournaledQueueConfig(
       name, maxItemSize, journaled, journalSize, syncJournal, saveArchivedJournals,
       checkpointTimer)
   }
+
+  def readersToStrings(): Seq[String] = {
+    List("<default>: " + defaultReaderConfig.toString) ++ readerConfigs.map { case (k, v) =>
+      "%s: %s".format(k, v)
+    }
+  }
 }
 
