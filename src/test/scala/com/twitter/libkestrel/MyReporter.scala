@@ -55,7 +55,6 @@ class MyReporter extends Reporter {
 
   def updateDisplay() {
     val hashes = (WIDTH * count.toDouble / total).toInt
-    ("#" * hashes)
     val bar = (if (failed > 0) RED else GREEN) + ("#" * hashes) + (" " * (WIDTH - hashes)) + NORMAL
     val note = if (failed > 0) "(errors: %d)".format(failed) else ""
     print("\r [%s] %d/%d %s ".format(bar, count, total, note))
