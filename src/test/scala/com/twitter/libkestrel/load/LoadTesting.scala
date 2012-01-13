@@ -37,6 +37,7 @@ trait LoadTesting {
     case object Simple extends QueueType
     case object Concurrent extends QueueType
     case object Journaled extends QueueType
+    case object Java7 extends QueueType
   }
 
   var queueType: QueueType = QueueType.Concurrent
@@ -48,6 +49,7 @@ trait LoadTesting {
       help(None, "help", "show this help screen")
       opt("S", "simple", "use old simple synchronized-based queue", { queueType = QueueType.Simple; () })
       opt("J", "journal", "use journaled queue in /tmp", { queueType = QueueType.Journaled; () })
+      opt("7", "java7", "use new java 7 LinkedBlockingQueue", { queueType = QueueType.Java7; () })
       opt("L", "limit", "<items>", "limit total queue size (default: %d)".format(itemLimit), { x: String =>
         itemLimit = x.toInt
       })
@@ -73,6 +75,9 @@ trait LoadTesting {
             fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest
           )
         ), new File("/tmp"), javaTimer, scheduler).toBlockingQueue[String]
+      }
+      case QueueType.Java7 => {
+        new JBlockingQueue(itemLimit * 1000)
       }
     }
   }
