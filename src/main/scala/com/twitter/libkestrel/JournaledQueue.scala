@@ -544,7 +544,8 @@ class JournaledQueue(
         log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
         return
       }
-      queue.putHead(item)
+      val newItem = item.copy(errorCount = item.errorCount + 1)
+      if (! readerConfig.errorHandler(newItem)) queue.putHead(newItem)
     }
 
     /**
