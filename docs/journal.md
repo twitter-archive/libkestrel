@@ -62,11 +62,12 @@ header: 27 64 26 03
 ### PUT (8)
 
 An item was added to the queue. This is the only entry in the writer files.
-The header size is either 5 or 7.
+The header size is either 6 or 8.
 
 Header:
 
   - i32 data size
+  - i32 error_count
   - i64 xid
   - i64 add_time (msec)
   - i64 expire_time (msec) [optional]
@@ -97,7 +98,7 @@ header size is always 1, and the data block is a sequence of 64-bit ids.
 Header:
 
   - i32 count
-  
+
 Data:
 
   - i64* xid

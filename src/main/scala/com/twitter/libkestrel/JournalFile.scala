@@ -149,10 +149,11 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
     if (item.data.size > LARGEST_DATA.inBytes) {
       throw new IOException("item too large")
     }
-    val b = buffer(item.data.size + (7 * 4) + 1)
-    val size = if (item.expireTime.isDefined) 7 else 5
+    val b = buffer(item.data.size + (8 * 4) + 1)
+    val size = if (item.expireTime.isDefined) 8 else 6
     b.put((PUT << 4 | size).toByte)
     b.putInt(item.data.size)
+    b.putInt(item.errorCount)
     b.putLong(item.id)
     b.putLong(item.addTime.inMilliseconds)
     item.expireTime.foreach { t => b.putLong(t.inMilliseconds) }
@@ -238,15 +239,16 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
         Record.ReadHead(id)
       }
       case PUT => {
-        if (b.limit < 20) {
+        if (b.limit < 24) {
           throw new CorruptedJournalException(lastPosition, file, "corrupted PUT")
         }
+        val errorCount = b.getInt()
         val id = b.getLong()
         val addTime = b.getLong()
         val expireTime = if (b.position + 4 <= b.limit) Some(b.getLong()) else None
         Record.Put(QueueItem(id, Time.fromMilliseconds(addTime), expireTime.map { t =>
           Time.fromMilliseconds(t)
-        }, data))
+        }, data, errorCount))
       }
       case READ_DONE => {
         if (data.size % 8 != 0) {
