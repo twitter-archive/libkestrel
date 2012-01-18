@@ -415,7 +415,6 @@ class JournaledQueue(
     // this happens within the serialized block of a put.
     private[libkestrel] def put(item: QueueItem) {
       discardExpired()
-      if (item.errorCount > 0 && readerConfig.errorHandler(item)) return
       serialized {
         val inReadBehind = journalReader.map { j =>
           // if item.id <= j.readBehindId, fillReadBehind already saw this item.
@@ -573,7 +572,11 @@ class JournaledQueue(
         return
       }
       val newItem = item.copy(errorCount = item.errorCount + 1)
-      if (! readerConfig.errorHandler(newItem)) queue.putHead(newItem)
+      if (readerConfig.errorHandler(newItem)) {
+        commitItem(newItem)
+      } else {
+        queue.putHead(newItem)
+      }
     }
 
     /**
