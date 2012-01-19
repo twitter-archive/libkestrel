@@ -382,6 +382,31 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(new String(item2.get.data) == "first")
     }
 
+    it("hands off reads that keep getting aborted") {
+      val readerConfig = makeReaderConfig().copy(errorHandler = { item => item.errorCount >= 2 })
+      val q = makeQueue(readerConfig = readerConfig)
+      q.put("doomed".getBytes, Time.now, None)
+
+      val reader = q.reader("")
+      val item1 = reader.get(None)()
+      assert(item1.isDefined)
+      assert(item1.get.id === 1)
+      assert(new String(item1.get.data) == "doomed")
+      assert(item1.get.errorCount === 0)
+
+      reader.unget(1)
+
+      val item2 = reader.get(None)()
+      assert(item2.isDefined)
+      assert(item2.get.id === 1)
+      assert(item2.get.errorCount === 1)
+
+      reader.unget(1)
+
+      val item3 = reader.get(None)()
+      assert(!item3.isDefined)
+    }
+
     it("can recover from stale checkpoints") {
       val q = makeQueue(config = config.copy(journalSize = 1.kilobyte))
       val reader = q.reader("")

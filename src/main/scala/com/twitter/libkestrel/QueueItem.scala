@@ -22,7 +22,8 @@ case class QueueItem(
   id: Long,
   addTime: Time,
   expireTime: Option[Time],
-  data: Array[Byte]
+  data: Array[Byte],
+  errorCount: Int = 0
 ) {
   override def equals(other: Any) = {
     other match {
@@ -36,8 +37,8 @@ case class QueueItem(
 
   override def toString = {
     val hex = data.slice(0, data.size min 64).map { b => "%x".format(b) }.mkString(" ")
-    "QueueItem(id=%d, addTime=%s, expireTime=%s, data=%s)".format(
-      id, addTime.inNanoseconds, expireTime.map { _.inNanoseconds }, hex
+    "QueueItem(id=%d, addTime=%s, expireTime=%s, data=%s, errors=%s)".format(
+      id, addTime.inNanoseconds, expireTime.map { _.inNanoseconds }, hex, errorCount
     )
   }
 }

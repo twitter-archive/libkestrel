@@ -44,7 +44,17 @@ import java.io.File
  * @param processExpiredItem What to do with items that are expired from this queue. This can be
  *   used to implement special processing for expired items, such as moving them to another queue
  *   or writing them into a logfile.
+ * @param errorHandler Any special action to take when an item is given to a client and the client
+ *   aborts it. The `errorCount` of the item will already be incremented. Return `false` if the
+ *   normal action (give the item to another client) should happen. Return `true` if libkestrel
+ *   should consider the matter taken care of, and not do anything more.
  * @param maxExpireSweep Maximum number of expired items to process at once.
+ * @param deliveryLatency Code to execute if you wish to track delivery latency (the time between
+ *   an item being added and a client being ready to receive it). Normally you would hook this up
+ *   to a stats collection library like ostrich.
+ * @param timeoutLatency Code to execute if you wish to track timeout latency (the time a client
+ *   actually spent waiting for an item to arrive before it timed out). Normally you would hook
+ *   this up to a stats collection library like ostrich.
  */
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
@@ -53,6 +63,7 @@ case class JournaledQueueReaderConfig(
   maxAge: Option[Duration] = None,
   fullPolicy: ConcurrentBlockingQueue.FullPolicy = ConcurrentBlockingQueue.FullPolicy.RefusePuts,
   processExpiredItem: (QueueItem) => Unit = { _ => },
+  errorHandler: (QueueItem) => Boolean = { _ => false },
   maxExpireSweep: Int = Int.MaxValue,
   deliveryLatency: (JournaledQueue#Reader, Duration) => Unit = { (_, _) => },
   timeoutLatency: (JournaledQueue#Reader, Duration) => Unit = { (_, _) => }

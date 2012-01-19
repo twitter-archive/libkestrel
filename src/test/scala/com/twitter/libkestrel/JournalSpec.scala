@@ -98,7 +98,7 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
       jf2.close()
 
       val j = makeJournal("test")
-      assert(j.journalSize === 2050L)
+      assert(j.journalSize === 2058L)
     }
 
     describe("fileForId") {
