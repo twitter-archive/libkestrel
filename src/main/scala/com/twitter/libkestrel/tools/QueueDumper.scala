@@ -89,6 +89,7 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
               verbose(" exp=%s", item.expireTime.get - now)
             }
           }
+          if (item.errorCount > 0) verbose(" errors=%d", item.errorCount)
           verbose("\n")
         }
         if (dump) {
