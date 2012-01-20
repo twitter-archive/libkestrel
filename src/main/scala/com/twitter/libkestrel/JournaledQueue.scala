@@ -187,8 +187,8 @@ class JournaledQueue(
     }
 
     Some(journal.map { j =>
-      j.put(data, addTime, expireTime, { item =>
-        readerMap.values.foreach { _.put(item.copy(errorCount = errorCount)) }
+      j.put(data, addTime, expireTime, errorCount, { item =>
+        readerMap.values.foreach { _.put(item) }
       }).flatMap { case (item, syncFuture) =>
         syncFuture
       }

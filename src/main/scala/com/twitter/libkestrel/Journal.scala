@@ -375,12 +375,13 @@ class Journal(
   }
 
   def put(
-    data: Array[Byte], addTime: Time, expireTime: Option[Time], f: QueueItem => Unit = { _ => }
+    data: Array[Byte], addTime: Time, expireTime: Option[Time], errorCount: Int = 0,
+    f: QueueItem => Unit = { _ => () }
   ): Future[(QueueItem, Future[Unit])] = {
     serialized {
       _tailId += 1
       val id = _tailId
-      val item = QueueItem(_tailId, addTime, expireTime, data)
+      val item = QueueItem(_tailId, addTime, expireTime, data, errorCount)
       val future = _journalFile.put(item)
       currentItems += 1
       currentBytes += data.size
