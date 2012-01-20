@@ -44,14 +44,16 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
       }
       var lastDisplay = 0L
 
+      var position = journalFile.position
       journalFile.foreach { record =>
         operations += 1
-        dumpItem(journalFile.position, record)
+        dumpItem(position, record)
         if (quiet && !dumpRaw && journalFile.position - lastDisplay > 1024 * 1024) {
           print("\rReading journal: %-6s".format(journalFile.position.bytes.toHuman))
           Console.flush()
           lastDisplay = journalFile.position
         }
+        position = journalFile.position
       }
       if (!dumpRaw) {
         print("\r" + (" " * 30) + "\r")
