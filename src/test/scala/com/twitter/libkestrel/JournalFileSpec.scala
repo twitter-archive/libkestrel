@@ -55,8 +55,8 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
   describe("JournalFile") {
     describe("put") {
-      val putData = "27 64 26 3 85 5 0 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
-      val putItem = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes)
+      val putData = "27 64 26 3 86 5 0 0 0 1 0 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
+      val putItem = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes, 1)
 
       it("write") {
         val testFile = new File(testFolder, "a1")
@@ -88,10 +88,10 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
       it("read several") {
         val headerData = "27 64 26 3"
-        val putData1 = "85 5 0 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
-        val putItem1 = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes)
-        val putData2 = "85 7 0 0 0 65 0 0 0 0 0 0 0 84 3 0 0 0 0 0 0 67 6f 6f 64 62 79 65"
-        val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, "goodbye".getBytes)
+        val putData1 = "86 5 0 0 0 3 0 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
+        val putItem1 = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes, 3)
+        val putData2 = "86 7 0 0 0 2 0 0 0 65 0 0 0 0 0 0 0 84 3 0 0 0 0 0 0 67 6f 6f 64 62 79 65"
+        val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, "goodbye".getBytes, 2)
 
         val testFile = new File(testFolder, "a1")
         writeFile(testFile, unhex(headerData + " " + putData1 + " " + putData2))
@@ -103,10 +103,10 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
       it("append") {
         val headerData = "27 64 26 3"
-        val putData1 = "85 5 0 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
-        val putItem1 = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes)
-        val putData2 = "85 7 0 0 0 65 0 0 0 0 0 0 0 84 3 0 0 0 0 0 0 67 6f 6f 64 62 79 65"
-        val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, "goodbye".getBytes)
+        val putData1 = "86 5 0 0 0 0 1 0 0 64 0 0 0 0 0 0 0 ff 0 0 0 0 0 0 0 68 65 6c 6c 6f"
+        val putItem1 = QueueItem(100, Time.fromMilliseconds(255), None, "hello".getBytes, 256)
+        val putData2 = "86 7 0 0 0 0 0 0 0 65 0 0 0 0 0 0 0 84 3 0 0 0 0 0 0 67 6f 6f 64 62 79 65"
+        val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, "goodbye".getBytes, 0)
 
         val testFile = new File(testFolder, "a1")
         val j = JournalFile.createWriter(testFile, null, Duration.MaxValue)

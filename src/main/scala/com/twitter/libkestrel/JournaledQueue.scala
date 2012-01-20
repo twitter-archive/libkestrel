@@ -63,6 +63,9 @@ class JournaledQueue(
   // checkpoint readers on a schedule.
   timer.schedule(config.checkpointTimer) { checkpoint() }
 
+  /**
+   * A read-only view of all the current `Reader` objects for this queue.
+   */
   def readers = readerMap.values
 
   /**
@@ -169,7 +172,9 @@ class JournaledQueue(
    * been added to every reader, and the returned future will trigger when the journal has been
    * written to disk.
    */
-  def put(data: Array[Byte], addTime: Time, expireTime: Option[Time]): Option[Future[Unit]] = {
+  def put(
+    data: Array[Byte], addTime: Time, expireTime: Option[Time] = None, errorCount: Int = 0
+  ): Option[Future[Unit]] = {
     if (closed) return None
     if (data.size > config.maxItemSize.inBytes) {
       log.debug("Rejecting put to %s: item too large (%s).", config.name, data.size.bytes.toHuman)
@@ -182,7 +187,7 @@ class JournaledQueue(
     }
 
     Some(journal.map { j =>
-      j.put(data, addTime, expireTime, { item =>
+      j.put(data, addTime, expireTime, errorCount, { item =>
         readerMap.values.foreach { _.put(item) }
       }).flatMap { case (item, syncFuture) =>
         syncFuture
@@ -197,12 +202,31 @@ class JournaledQueue(
     })
   }
 
+  /**
+   * Put an item into the queue. If the put fails, `None` is returned. On success, the item has
+   * been added to every reader, and the returned future will trigger when the journal has been
+   * written to disk.
+   *
+   * This method really just calls the other `put` method with the parts of the queue item,
+   * ignoring the given item id. The written item will have a new id.
+   */
+  def put(item: QueueItem): Option[Future[Unit]] = {
+    put(item.data, item.addTime, item.expireTime, item.errorCount)
+  }
+
+  /**
+   * Generate a debugging string (python-style) for this queue, with key stats.
+   */
   def toDebug: String = {
     "<JournaledQueue: name=%s items=%d bytes=%d journalBytes=%s readers=(%s)%s>".format(
       config.name, items, bytes, journalBytes, readerMap.values.map { _.toDebug }.mkString(", "),
       (if (closed) " closed" else ""))
   }
 
+  /**
+   * Create a wrapper object for this queue that implements the `BlockingQueue` trait. Not all
+   * operations are supported: specifically, `putHead` and `pollIf` throw an exception if called.
+   */
   def toBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): BlockingQueue[A] = {
     val reader = JournaledQueue.this.reader("")
 
@@ -255,6 +279,9 @@ class JournaledQueue(
   }
 
 
+  /**
+   * A reader for this queue, which has its own head pointer and list of open reads.
+   */
   class Reader(private[libkestrel] var name: String, val readerConfig: JournaledQueueReaderConfig)
     extends Serialized
   {
@@ -477,7 +504,7 @@ class JournaledQueue(
      * Remove and return an item from the queue, if there is one.
      * If no deadline is given, an item is only returned if one is immediately available.
      */
-    def get(deadline: Option[Time]): Future[Option[QueueItem]] = {
+    def get(deadline: Option[Time], peeking: Boolean = false): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
       discardExpired()
       val startTime = Time.now
@@ -494,11 +521,15 @@ class JournaledQueue(
           case s @ Some(item) => {
             if (hasExpired(item.addTime, item.expireTime, Time.now)) {
               // try again.
-              get(deadline)
+              get(deadline, peeking)
             } else {
               readerConfig.deliveryLatency(this, Time.now - item.addTime)
               age = Time.now - item.addTime
-              openReads.put(item.id, item)
+              if (peeking) {
+                queue.putHead(item)
+              } else {
+                openReads.put(item.id, item)
+              }
               Future.value(s)
             }
           }
@@ -544,18 +575,19 @@ class JournaledQueue(
         log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
         return
       }
-      queue.putHead(item)
+      val newItem = item.copy(errorCount = item.errorCount + 1)
+      if (readerConfig.errorHandler(newItem)) {
+        commitItem(newItem)
+      } else {
+        queue.putHead(newItem)
+      }
     }
 
     /**
      * Peek at the head item in the queue, if there is one.
      */
     def peek(deadline: Option[Time]): Future[Option[QueueItem]] = {
-      val future = get(deadline)
-      future.map { optItem =>
-        if (optItem.isDefined) unget(optItem.get.id)
-      }
-      future
+      get(deadline, true)
     }
 
     /**
