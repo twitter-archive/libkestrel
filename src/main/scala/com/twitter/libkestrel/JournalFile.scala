@@ -35,8 +35,7 @@ object JournalFile {
   val LARGEST_DATA = 16.megabytes
 
   private[this] def newBuffer(size: Int) = {
-    val buffer = new Array[Byte](size)
-    val byteBuffer = ByteBuffer.wrap(buffer)
+    val byteBuffer = ByteBuffer.allocate(size)
     byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
     byteBuffer
   }
@@ -146,18 +145,20 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
   private[this] val READ_DONE = 9
 
   def put(item: QueueItem): Future[Unit] = {
-    if (item.data.size > LARGEST_DATA.inBytes) {
+    if (item.dataSize > LARGEST_DATA.inBytes) {
       throw new IOException("item too large")
     }
-    val b = buffer(item.data.size + (8 * 4) + 1)
+    val b = buffer(item.dataSize + (8 * 4) + 1)
     val size = if (item.expireTime.isDefined) 8 else 6
     b.put((PUT << 4 | size).toByte)
-    b.putInt(item.data.size)
+    b.putInt(item.dataSize)
     b.putInt(item.errorCount)
     b.putLong(item.id)
     b.putLong(item.addTime.inMilliseconds)
     item.expireTime.foreach { t => b.putLong(t.inMilliseconds) }
+    item.data.mark
     b.put(item.data)
+    item.data.reset
     write(b)
   }
 
@@ -209,15 +210,14 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
     }
     b.rewind()
 
-    var data: Array[Byte] = null
+    var dataBuffer: ByteBuffer = null
     if (command >= 8) {
       val dataSize = b.getInt()
       if (dataSize > LARGEST_DATA.inBytes) {
         throw new CorruptedJournalException(lastPosition, file, "item too large")
       }
 
-      data = new Array[Byte](dataSize)
-      val dataBuffer = ByteBuffer.wrap(data)
+      dataBuffer = ByteBuffer.allocate(dataSize)
       try {
         do {
           x = reader.read(dataBuffer)
@@ -226,6 +226,7 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
         case e: IOException =>
           throw new CorruptedJournalException(lastPosition, file, e.toString)
       }
+      dataBuffer.rewind
     }
 
     if (x < 0) throw new CorruptedJournalException(lastPosition, file, "truncated entry")
@@ -248,14 +249,14 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
         val expireTime = if (b.position + 4 <= b.limit) Some(b.getLong()) else None
         Record.Put(QueueItem(id, Time.fromMilliseconds(addTime), expireTime.map { t =>
           Time.fromMilliseconds(t)
-        }, data, errorCount))
+        }, dataBuffer, errorCount))
       }
       case READ_DONE => {
-        if (data.size % 8 != 0) {
+        if (dataBuffer.remaining % 8 != 0) {
           throw new CorruptedJournalException(lastPosition, file, "corrupted READ_DONE")
         }
-        val ids = new Array[Long](data.size / 8)
-        val b = ByteBuffer.wrap(data)
+        val ids = new Array[Long](dataBuffer.remaining / 8)
+        val b = dataBuffer
         b.order(ByteOrder.LITTLE_ENDIAN)
         for (i <- 0 until ids.size) { ids(i) = b.getLong() }
         Record.ReadDone(ids)

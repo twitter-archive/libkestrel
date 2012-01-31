@@ -32,19 +32,25 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
 
   def makeFiles() {
     val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-    jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-    jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+    jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
+    jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
     jf1.close()
 
     val jf2 = JournalFile.createWriter(new File(testFolder, "test.2"), null, Duration.MaxValue)
-    jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
-    jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+    jf2.put(QueueItem(102L, Time.now, None, ByteBuffer.wrap("102".getBytes)))
+    jf2.put(QueueItem(103L, Time.now, None, ByteBuffer.wrap("103".getBytes)))
     jf2.close()
 
     val jf3 = JournalFile.createWriter(new File(testFolder, "test.3"), null, Duration.MaxValue)
-    jf3.put(QueueItem(104L, Time.now, None, "104".getBytes))
-    jf3.put(QueueItem(105L, Time.now, None, "105".getBytes))
+    jf3.put(QueueItem(104L, Time.now, None, ByteBuffer.wrap("104".getBytes)))
+    jf3.put(QueueItem(105L, Time.now, None, ByteBuffer.wrap("105".getBytes)))
     jf3.close()
+  }
+
+  def bufferToString(b: ByteBuffer) = {
+    val bytes = new Array[Byte](b.remaining)
+    b.get(bytes)
+    new String(bytes)
   }
 
   describe("Journal#Reader") {
@@ -79,8 +85,8 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
       jf.close()
 
       val jf2 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-      jf2.put(QueueItem(890L, Time.now, None, "hi".getBytes))
-      jf2.put(QueueItem(910L, Time.now, None, "hi".getBytes))
+      jf2.put(QueueItem(890L, Time.now, None, ByteBuffer.wrap("hi".getBytes)))
+      jf2.put(QueueItem(910L, Time.now, None, ByteBuffer.wrap("hi".getBytes)))
       jf2.close()
 
       val j = makeJournal("test")
@@ -118,10 +124,10 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
 
     it("flush all items") {
       val j = makeJournal("test")
-      val (item1, future1) = j.put("hi".getBytes, Time.now, None)()
+      val (item1, future1) = j.put(ByteBuffer.wrap("hi".getBytes), Time.now, None)()
       val reader = j.reader("1")
       reader.commit(item1.id)
-      val (item2, future2) = j.put("bye".getBytes, Time.now, None)()
+      val (item2, future2) = j.put(ByteBuffer.wrap("bye".getBytes), Time.now, None)()
 
       assert(reader.head === item1.id)
       reader.flush()
@@ -131,8 +137,8 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
     describe("read-behind") {
       it("start") {
         val jf = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-        jf.put(QueueItem(100L, Time.now, None, "100".getBytes))
-        jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
+        jf.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
+        jf.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
         jf.close()
 
         val j = makeJournal("test")
@@ -143,7 +149,7 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
         assert(reader.inReadBehind)
         val item = reader.nextReadBehind()
         assert(item.map { _.id } === Some(101L))
-        assert(new String(item.get.data) === "101")
+        assert(bufferToString(item.get.data) === "101")
 
         reader.endReadBehind()
         assert(!reader.inReadBehind)
@@ -151,13 +157,13 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
 
       it("start at file edge") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-        jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-        jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+        jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
+        jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
         jf1.close()
 
         val jf2 = JournalFile.createWriter(new File(testFolder, "test.2"), null, Duration.MaxValue)
-        jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
-        jf2.put(QueueItem(103L, Time.now, None, "103".getBytes))
+        jf2.put(QueueItem(102L, Time.now, None, ByteBuffer.wrap("102".getBytes)))
+        jf2.put(QueueItem(103L, Time.now, None, ByteBuffer.wrap("103".getBytes)))
         jf2.close()
 
         val j = makeJournal("test")
@@ -178,7 +184,7 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
 
           val item = reader.nextReadBehind()
           assert(item.map { _.id } === Some(104L))
-          assert(new String(item.get.data) === "104")
+          assert(bufferToString(item.get.data) === "104")
           j.close()
         }
 
@@ -196,8 +202,8 @@ class JournalReaderSpec extends Spec with ShouldMatchers with TempFolder with Te
 
       it("until it catches up") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-        jf1.put(QueueItem(100L, Time.now, None, "100".getBytes))
-        jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+        jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
+        jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
         jf1.close()
 
         val j = makeJournal("test")

@@ -41,24 +41,33 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer, scheduler)
   }
 
-  def haveId(id: Long) = new Matcher[Array[Byte]]() {
-    def apply(data: Array[Byte]) = MatchResult(
+  def stringToBuffer(s: String) = ByteBuffer.wrap(s.getBytes)
+  def bufferToString(b: ByteBuffer): String = {
+    val bytes = new Array[Byte](b.remaining)
+    b.mark
+    b.get(bytes)
+    b.reset
+    new String(bytes)
+  }
+  def bufferToBytes(b: ByteBuffer): List[Byte] = bufferToString(b).getBytes.toList
+
+  def haveId(id: Long) = new Matcher[ByteBuffer]() {
+    def apply(buffer: ByteBuffer) = MatchResult(
       {
-        val buffer = ByteBuffer.wrap(data)
         buffer.order(ByteOrder.BIG_ENDIAN)
         buffer.getLong() == id
       },
-      "data " + data.toList + " doesn't match id " + id,
-      "data " + data.toList + " matches id " + id
+      "data " + bufferToBytes(buffer) + " doesn't match id " + id,
+      "data " + bufferToBytes(buffer) + " matches id " + id
     )
   }
 
   def makeId(id: Long, size: Int) = {
-    val data = new Array[Byte](size)
-    val buffer = ByteBuffer.wrap(data)
+    val buffer = ByteBuffer.allocate(size)
     buffer.order(ByteOrder.BIG_ENDIAN)
     buffer.putLong(id)
-    data
+    buffer.rewind
+    buffer
   }
 
   def eventually(f: => Boolean): Boolean = {
@@ -335,8 +344,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("can commit items out of order") {
       val q = makeQueue()
-      q.put("first".getBytes, Time.now, None)
-      q.put("second".getBytes, Time.now, None)
+      q.put(stringToBuffer("first"), Time.now, None)
+      q.put(stringToBuffer("second"), Time.now, None)
 
       val reader = q.reader("")
       val item1 = reader.get(None)()
@@ -366,32 +375,32 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("re-delivers aborted reads") {
       val q = makeQueue()
-      q.put("first".getBytes, Time.now, None)
-      q.put("second".getBytes, Time.now, None)
+      q.put(stringToBuffer("first"), Time.now, None)
+      q.put(stringToBuffer("second"), Time.now, None)
 
       val reader = q.reader("")
       val item1 = reader.get(None)()
       assert(item1.isDefined)
       assert(item1.get.id === 1)
-      assert(new String(item1.get.data) == "first")
+      assert(bufferToString(item1.get.data) == "first")
       reader.unget(1)
 
       val item2 = reader.get(None)()
       assert(item2.isDefined)
       assert(item2.get.id === 1)
-      assert(new String(item2.get.data) == "first")
+      assert(bufferToString(item2.get.data) == "first")
     }
 
     it("hands off reads that keep getting aborted") {
       val readerConfig = makeReaderConfig().copy(errorHandler = { item => item.errorCount >= 2 })
       val q = makeQueue(readerConfig = readerConfig)
-      q.put("doomed".getBytes, Time.now, None)
+      q.put(stringToBuffer("doomed"), Time.now, None)
 
       val reader = q.reader("")
       val item1 = reader.get(None)()
       assert(item1.isDefined)
       assert(item1.get.id === 1)
-      assert(new String(item1.get.data) == "doomed")
+      assert(bufferToString(item1.get.data) == "doomed")
       assert(item1.get.errorCount === 0)
 
       reader.unget(1)
@@ -471,12 +480,12 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         val q = makeQueue(readerConfig = makeReaderConfig.copy(processExpiredItem = callback))
         val reader = q.reader("")
-        q.put("dead!".getBytes, Time.now, Some(1.second.fromNow))
+        q.put(stringToBuffer("dead!"), Time.now, Some(1.second.fromNow))
 
         timeMutator.advance(1.second)
         assert(reader.get(None)() === None)
         assert(received.isDefined)
-        assert(new String(received.get.data) === "dead!")
+        assert(bufferToString(received.get.data) === "dead!")
       }
     }
 
@@ -484,7 +493,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       Time.withCurrentTimeFrozen { timeMutator =>
         var received: List[String] = Nil
         def callback(item: QueueItem) {
-          received ::= new String(item.data)
+          received ::= bufferToString(item.data)
         }
 
         val q = makeQueue(readerConfig = makeReaderConfig.copy(
@@ -493,19 +502,19 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         ))
         val reader = q.reader("")
         (1 to 10).foreach { id =>
-          q.put(id.toString.getBytes, Time.now, Some(100.milliseconds.fromNow))
+          q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
         }
 
         timeMutator.advance(100.milliseconds)
         assert(reader.items === 10)
         assert(received === Nil)
 
-        q.put("poof".getBytes, Time.now, None)
+        q.put(stringToBuffer("poof"), Time.now, None)
         assert(reader.items === 8)
         assert(received === List("3", "2", "1"))
         received = Nil
 
-        q.put("poof".getBytes, Time.now, None)
+        q.put(stringToBuffer("poof"), Time.now, None)
         assert(reader.items === 6)
         assert(received === List("6", "5", "4"))
         q.close()
@@ -515,7 +524,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     it("honors default expiration") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val q = makeQueue(readerConfig = makeReaderConfig.copy(maxAge = Some(1.second)))
-        q.put("hi".getBytes, Time.now, None)
+        q.put(stringToBuffer("hi"), Time.now, None)
 
         timeMutator.advance(1.second)
         assert(q.reader("").get(None)() === None)
@@ -544,8 +553,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val q = makeQueue()
         val reader = q.reader("")
 
-        q.put("commie".getBytes, Time.now, None)
-        q.put("spooky".getBytes, Time.now, None)
+        q.put(stringToBuffer("commie"), Time.now, None)
+        q.put(stringToBuffer("spooky"), Time.now, None)
         timeMutator.advance(15.milliseconds)
         assert(reader.age === 0.milliseconds)
         val item1 = reader.get(None)()
@@ -625,10 +634,10 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       it("can put and get") {
         val q = makeQueue()
         val reader = q.reader("")
-        q.put("hi".getBytes, Time.now, None)
+        q.put(stringToBuffer("hi"), Time.now, None)
         val item = reader.get(None)()
         assert(item.isDefined)
-        assert(new String(item.get.data) === "hi")
+        assert(bufferToString(item.get.data) === "hi")
         assert(reader.putCount.get === 1)
         q.close()
       }
@@ -640,15 +649,15 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         ))
         val reader = q.reader("")
 
-        q.put("hi".getBytes, Time.now, None)
+        q.put(stringToBuffer("hi"), Time.now, None)
         assert(reader.items === 1)
 
-        q.put("scoot over".getBytes, Time.now, None)
+        q.put(stringToBuffer("scoot over"), Time.now, None)
         assert(eventually(reader.items == 1))
 
         val item = reader.get(None)()
         assert(item.isDefined)
-        assert(new String(item.get.data) === "scoot over")
+        assert(bufferToString(item.get.data) === "scoot over")
         assert(reader.putCount.get === 2)
         assert(reader.discardedCount.get === 1)
         assert(reader.discarded === 1)
@@ -681,7 +690,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       it("refuses too-large items") {
         val q = makeQueue(config = config.copy(maxItemSize = 1.kilobyte))
-        assert(q.put(new Array[Byte](1025), Time.now, None) === None)
+        assert(q.put(ByteBuffer.allocate(1025), Time.now, None) === None)
       }
 
       it("honors maxItems") {
@@ -691,12 +700,12 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         ))
         val reader = q.reader("")
         (1 to 5).foreach { id =>
-          q.put(id.toString.getBytes, Time.now, None)
+          q.put(stringToBuffer(id.toString), Time.now, None)
         }
         assert(reader.items === 3)
         val item = reader.get(None)()
         assert(item.isDefined)
-        assert(new String(item.get.data) === "3")
+        assert(bufferToString(item.get.data) === "3")
         q.close()
       }
 
@@ -721,11 +730,11 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val q = makeQueue(config = config.copy(journaled = false))
       val reader = q.reader("")
 
-      q.put("first post".getBytes, Time.now, None)
-      q.put("laggy".getBytes, Time.now, None)
+      q.put(stringToBuffer("first post"), Time.now, None)
+      q.put(stringToBuffer("laggy"), Time.now, None)
       val item = reader.get(None)()
       assert(item.isDefined)
-      assert(new String(item.get.data) === "first post")
+      assert(bufferToString(item.get.data) === "first post")
       q.close()
 
       assert(!new File(testFolder, "test.read.").exists)
@@ -758,7 +767,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val reader = q.reader("")
 
         (1 to 4).foreach { id =>
-          q.put(new Array[Byte](1024), Time.now, None)
+          q.put(ByteBuffer.allocate(1024), Time.now, None)
         }
         assert(reader.items === 4)
         reader.flush()
@@ -772,7 +781,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         val reader = q.reader("")
 
         (1 to 5).foreach { id =>
-          q.put(new Array[Byte](512), Time.now, None)
+          q.put(ByteBuffer.allocate(512), Time.now, None)
         }
         assert(reader.items === 5)
         assert(reader.inReadBehind)

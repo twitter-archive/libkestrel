@@ -22,6 +22,7 @@ import com.twitter.conversions.time._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService}
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.immutable
@@ -29,8 +30,8 @@ import scala.collection.JavaConverters._
 import config._
 
 trait Codec[A] {
-  def encode(item: A): Array[Byte]
-  def decode(data: Array[Byte]): A
+  def encode(item: A): ByteBuffer
+  def decode(data: ByteBuffer): A
 }
 
 class JournaledQueue(
@@ -173,11 +174,11 @@ class JournaledQueue(
    * written to disk.
    */
   def put(
-    data: Array[Byte], addTime: Time, expireTime: Option[Time] = None, errorCount: Int = 0
+    data: ByteBuffer, addTime: Time, expireTime: Option[Time] = None, errorCount: Int = 0
   ): Option[Future[Unit]] = {
     if (closed) return None
-    if (data.size > config.maxItemSize.inBytes) {
-      log.debug("Rejecting put to %s: item too large (%s).", config.name, data.size.bytes.toHuman)
+    if (data.remaining > config.maxItemSize.inBytes) {
+      log.debug("Rejecting put to %s: item too large (%s).", config.name, data.remaining.bytes.toHuman)
       return None
     }
     // if any reader is rejecting puts, the put is rejected.
@@ -306,7 +307,7 @@ class JournaledQueue(
     /**
      * Byte count of open (uncommitted) reads.
      */
-    def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.data.size }
+    def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.dataSize }
 
     /**
      * Total number of items ever added to this queue.
@@ -360,10 +361,10 @@ class JournaledQueue(
         if (!inReadBehind) {
           queue.put(item)
           memoryItems += 1
-          memoryBytes += item.data.size
+          memoryBytes += item.dataSize
         }
         items += 1
-        bytes += item.data.size
+        bytes += item.dataSize
         if (bytes >= readerConfig.maxMemorySize.inBytes && !inReadBehind) {
           j.startReadBehind(item.id)
           inReadBehind = true
@@ -433,10 +434,10 @@ class JournaledQueue(
         if (!inReadBehind) {
           queue.put(item)
           memoryItems += 1
-          memoryBytes += item.data.size
+          memoryBytes += item.dataSize
         }
         items += 1
-        bytes += item.data.size
+        bytes += item.dataSize
         putCount.getAndIncrement()
 
         // we've already checked canPut by here, but we may still drop the oldest item(s).
@@ -467,9 +468,9 @@ class JournaledQueue(
           expiredCount.getAndIncrement()
           serialized {
             items -= 1
-            bytes -= item.data.size
+            bytes -= item.dataSize
             memoryItems -= 1
-            memoryBytes -= item.data.size
+            memoryBytes -= item.dataSize
             expired += 1
             journalReader.foreach { _.commit(item.id) }
             fillReadBehind()
@@ -491,7 +492,7 @@ class JournaledQueue(
             j.nextReadBehind().foreach { item =>
               queue.put(item)
               memoryItems += 1
-              memoryBytes += item.data.size
+              memoryBytes += item.dataSize
             }
           }
         }
@@ -558,9 +559,9 @@ class JournaledQueue(
     private[this] def commitItem(item: QueueItem) {
       journalReader.foreach { _.commit(item.id) }
       items -= 1
-      bytes -= item.data.size
+      bytes -= item.dataSize
       memoryItems -= 1
-      memoryBytes -= item.data.size
+      memoryBytes -= item.dataSize
       if (items == 0) age = 0.milliseconds
       fillReadBehind()
     }

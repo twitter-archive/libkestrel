@@ -81,7 +81,7 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
         if (firstId == 0) firstId = item.id
         lastId = item.id
         if (!quiet) {
-          verbose("PUT %-6d id=%d", item.data.size, item.id)
+          verbose("PUT %-6d id=%d", item.dataSize, item.id)
           if (item.expireTime.isDefined) {
             if (item.expireTime.get - now < 0.milliseconds) {
               verbose(" expired")
@@ -92,10 +92,12 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
           if (item.errorCount > 0) verbose(" errors=%d", item.errorCount)
           verbose("\n")
         }
+        val data = new Array[Byte](item.dataSize)
+        item.data.get(data)
         if (dump) {
-          println("    " + new String(item.data, "ISO-8859-1"))
+          println("    " + new String(data, "ISO-8859-1"))
         } else if (dumpRaw) {
-          print(new String(item.data, "ISO-8859-1"))
+          print(new String(data, "ISO-8859-1"))
         }
       case JournalFile.Record.ReadHead(id) =>
         verbose("HEAD %d\n", id)

@@ -21,6 +21,7 @@ import com.twitter.conversions.storage._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileOutputStream, IOException}
+import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledExecutorService
 import scala.annotation.tailrec
 import scala.collection.immutable
@@ -197,7 +198,7 @@ class Journal(
           case JournalFile.Record.Put(item) => {
             if (firstId == None) firstId = Some(item.id)
             items += 1
-            bytes += item.data.size
+            bytes += item.dataSize
             tailId = item.id
           }
           case _ =>
@@ -375,7 +376,7 @@ class Journal(
   }
 
   def put(
-    data: Array[Byte], addTime: Time, expireTime: Option[Time], errorCount: Int = 0,
+    data: ByteBuffer, addTime: Time, expireTime: Option[Time], errorCount: Int = 0,
     f: QueueItem => Unit = { _ => () }
   ): Future[(QueueItem, Future[Unit])] = {
     serialized {
@@ -384,7 +385,7 @@ class Journal(
       val item = QueueItem(_tailId, addTime, expireTime, data, errorCount)
       val future = _journalFile.put(item)
       currentItems += 1
-      currentBytes += data.size
+      currentBytes += data.remaining
       if (_journalFile.position >= maxFileSize.inBytes) rotate()
       // give the caller a chance to run some other code serialized:
       f(item)

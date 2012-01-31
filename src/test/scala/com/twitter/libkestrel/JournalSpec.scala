@@ -32,9 +32,11 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
 
   def addItem(j: Journal, size: Int) = {
     val now = Time.now.inMilliseconds
-    j.put(new Array[Byte](size), Time.now, None)
+    j.put(ByteBuffer.allocate(size), Time.now, None)
     now
   }
+
+  def stringToBuffer(s: String) = ByteBuffer.wrap(s.getBytes)
 
   describe("Journal") {
     it("find reader/writer files") {
@@ -49,7 +51,7 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
           "test.901", "test.8000", "test.3leet", "test.1", "test.5005"
         ).foreach { name =>
           val jf = JournalFile.createWriter(new File(testFolder, name), null, Duration.MaxValue)
-          jf.put(QueueItem(1L, Time.now, None, new Array[Byte](1)))
+          jf.put(QueueItem(1L, Time.now, None, ByteBuffer.allocate(1)))
           jf.close()
         }
 
@@ -91,10 +93,10 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
 
     it("report size correctly") {
       val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-      jf1.put(QueueItem(101L, Time.now, None, new Array[Byte](1000)))
+      jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.allocate(1000)))
       jf1.close()
       val jf2 = JournalFile.createWriter(new File(testFolder, "test.2"), null, Duration.MaxValue)
-      jf2.put(QueueItem(102L, Time.now, None, new Array[Byte](1000)))
+      jf2.put(QueueItem(102L, Time.now, None, ByteBuffer.allocate(1000)))
       jf2.close()
 
       val j = makeJournal("test")
@@ -110,7 +112,7 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
           ("test.5005", 5005)
         ).foreach { case (name, id) =>
           val jf = JournalFile.createWriter(new File(testFolder, name), null, Duration.MaxValue)
-          jf.put(QueueItem(id, Time.now, None, new Array[Byte](5)))
+          jf.put(QueueItem(id, Time.now, None, ByteBuffer.allocate(5)))
           jf.close()
         }
 
@@ -128,15 +130,15 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
       it("during journal rotation") {
         Time.withCurrentTimeFrozen { timeMutator =>
           val j = makeJournal("test", 1.kilobyte)
-          j.put(new Array[Byte](512), Time.now, None)
+          j.put(ByteBuffer.allocate(512), Time.now, None)
           timeMutator.advance(1.millisecond)
-          j.put(new Array[Byte](512), Time.now, None)
+          j.put(ByteBuffer.allocate(512), Time.now, None)
           timeMutator.advance(1.millisecond)
-          j.put(new Array[Byte](512), Time.now, None)
+          j.put(ByteBuffer.allocate(512), Time.now, None)
           timeMutator.advance(1.millisecond)
-          j.put(new Array[Byte](512), Time.now, None)
+          j.put(ByteBuffer.allocate(512), Time.now, None)
           timeMutator.advance(1.millisecond)
-          j.put(new Array[Byte](512), Time.now, None)
+          j.put(ByteBuffer.allocate(512), Time.now, None)
 
           val file1 = new File(testFolder, "test." + 4.milliseconds.ago.inMilliseconds)
           val file2 = new File(testFolder, "test." + 3.milliseconds.ago.inMilliseconds)
@@ -160,8 +162,8 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         jf.close()
       }
       val jf = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-      jf.put(QueueItem(100L, Time.now, None, "hi".getBytes))
-      jf.put(QueueItem(105L, Time.now, None, "hi".getBytes))
+      jf.put(QueueItem(100L, Time.now, None, stringToBuffer("hi")))
+      jf.put(QueueItem(105L, Time.now, None, stringToBuffer("hi")))
       jf.close()
 
       val j = makeJournal("test")
@@ -245,8 +247,8 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
       it("with a head id in the future") {
         // create main journal
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-        jf1.put(QueueItem(390L, Time.now, None, "hi".getBytes))
-        jf1.put(QueueItem(400L, Time.now, None, "hi".getBytes))
+        jf1.put(QueueItem(390L, Time.now, None, stringToBuffer("hi")))
+        jf1.put(QueueItem(400L, Time.now, None, stringToBuffer("hi")))
         jf1.close()
 
         // create readers with impossible ids
@@ -269,7 +271,7 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
 
       it("with a head id that doesn't exist anymore") {
         val jf1 = JournalFile.createWriter(new File(testFolder, "test.1"), null, Duration.MaxValue)
-        jf1.put(QueueItem(800L, Time.now, None, "hi".getBytes))
+        jf1.put(QueueItem(800L, Time.now, None, stringToBuffer("hi")))
         jf1.close()
         val jf2 = JournalFile.createReader(new File(testFolder, "test.read.1"), null, Duration.MaxValue)
         jf2.readHead(600L)
@@ -285,14 +287,14 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
       Time.withCurrentTimeFrozen { timeMutator =>
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val j = makeJournal("test")
-        val (item, future) = j.put("hi".getBytes, Time.now, None)()
+        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
         assert(item.id === 1L)
         j.close()
 
         val file = new File(testFolder, "test." + Time.now.inMilliseconds)
         val jf = JournalFile.openWriter(file, null, Duration.MaxValue)
         assert(jf.readNext() ===
-          Some(JournalFile.Record.Put(QueueItem(1L, roundedTime, None, "hi".getBytes))))
+          Some(JournalFile.Record.Put(QueueItem(1L, roundedTime, None, stringToBuffer("hi")))))
         jf.close()
       }
     }
@@ -302,23 +304,23 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val file1 = new File(testFolder, "test.1")
         val jf1 = JournalFile.createWriter(file1, null, Duration.MaxValue)
-        jf1.put(QueueItem(101L, Time.now, None, "101".getBytes))
+        jf1.put(QueueItem(101L, Time.now, None, stringToBuffer("101")))
         jf1.close()
         val file2 = new File(testFolder, "test.2")
         val jf2 = JournalFile.createWriter(file2, null, Duration.MaxValue)
-        jf2.put(QueueItem(102L, Time.now, None, "102".getBytes))
+        jf2.put(QueueItem(102L, Time.now, None, stringToBuffer("102")))
         jf2.close()
 
         val j = makeJournal("test")
-        val (item, future) = j.put("hi".getBytes, Time.now, None)()
+        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
         assert(item.id === 103L)
         j.close()
 
         val jf3 = JournalFile.openWriter(file2, null, Duration.MaxValue)
         assert(jf3.readNext() ===
-          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "102".getBytes))))
+          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, stringToBuffer("102")))))
         assert(jf3.readNext() ===
-          Some(JournalFile.Record.Put(QueueItem(103L, roundedTime, None, "hi".getBytes))))
+          Some(JournalFile.Record.Put(QueueItem(103L, roundedTime, None, stringToBuffer("hi")))))
         assert(jf3.readNext() === None)
         jf3.close()
       }
@@ -331,8 +333,8 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         // write 2 valid entries, but truncate the last one to make it corrupted.
         val file = new File(testFolder, "test.1")
         val jf = JournalFile.createWriter(file, null, Duration.MaxValue)
-        jf.put(QueueItem(101L, Time.now, None, "101".getBytes))
-        jf.put(QueueItem(102L, Time.now, None, "102".getBytes))
+        jf.put(QueueItem(101L, Time.now, None, stringToBuffer("101")))
+        jf.put(QueueItem(102L, Time.now, None, stringToBuffer("102")))
         jf.close()
 
         val raf = new RandomAccessFile(file, "rw")
@@ -340,15 +342,15 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         raf.close()
 
         val j = makeJournal("test")
-        val (item, future) = j.put("hi".getBytes, Time.now, None)()
+        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
         assert(item.id === 102L)
         j.close()
 
         val jf2 = JournalFile.openWriter(file, null, Duration.MaxValue)
         assert(jf2.readNext() ===
-          Some(JournalFile.Record.Put(QueueItem(101L, roundedTime, None, "101".getBytes))))
+          Some(JournalFile.Record.Put(QueueItem(101L, roundedTime, None, stringToBuffer("101")))))
         assert(jf2.readNext() ===
-          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, "hi".getBytes))))
+          Some(JournalFile.Record.Put(QueueItem(102L, roundedTime, None, stringToBuffer("hi")))))
         assert(jf2.readNext() === None)
         jf2.close()
       }
@@ -370,11 +372,11 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         val defaultReader = new File(testFolder, "test.read.")
         assert(testFolder.list.toList === List(file1, file2, defaultReader).map { _.getName() })
         assert(JournalFile.openWriter(file1, null, Duration.MaxValue).toList === List(
-          JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
-          JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
+          JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, ByteBuffer.allocate(512))),
+          JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, ByteBuffer.allocate(512)))
         ))
         assert(JournalFile.openWriter(file2, null, Duration.MaxValue).toList === List(
-          JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, new Array[Byte](512)))
+          JournalFile.Record.Put(QueueItem(3L, Time.fromMilliseconds(time3), None, ByteBuffer.allocate(512)))
         ))
       }
     }
