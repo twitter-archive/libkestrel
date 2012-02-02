@@ -44,17 +44,18 @@ object PeriodicSyncFile {
 }
 
 trait SyncFileWriter {
-  def flush(): Unit
+  def force(): Unit
   def position: Long
   def position(p: Long): Unit
   def truncate(onClose: Boolean): Unit
   def write(buffer: ByteBuffer): Unit
+  def close(): Unit
 }
 
 class StreamSyncFileWriter(file: File) extends SyncFileWriter {
   val writer = new FileOutputStream(file, true).getChannel
 
-  def flush() { writer.force(false) }
+  def force() { writer.force(false) }
 
   def position = writer.position
   def position(p: Long) { writer.position(p) }
@@ -65,6 +66,8 @@ class StreamSyncFileWriter(file: File) extends SyncFileWriter {
       writer.write(buffer)
     } while(buffer.position < buffer.limit)
   }
+
+  def close() { writer.close() }
 }
 
 class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWriter {
@@ -75,7 +78,7 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWrite
     map
   }
 
-  def flush() { writer.force() }
+  def force() { writer.force() }
 
   def position = writer.position.toLong
 
@@ -109,6 +112,12 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWrite
       }
       writer.reset()
     }
+  }
+
+  def close() {
+    // force unmap -- illegal to access writer after this point (the JVM *will* segfault or you'll be accessing
+    // some other file recently mapped to the same memory space)
+    writer.asInstanceOf[sun.nio.ch.DirectBuffer].cleaner().clean()
   }
 }
 
@@ -149,7 +158,7 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
       val completed = promises.size
       val fsyncStart = Time.now
       try {
-        writer.flush()
+        writer.force()
       } catch {
         case e: IOException => {
           for (i <- 0 until completed) {
@@ -176,7 +185,7 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     writer.write(buffer)
     if (period == 0.seconds) {
       try {
-        writer.flush()
+        writer.force()
         DONE
       } catch {
         case e: IOException =>
@@ -202,6 +211,7 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     periodicSyncTask.stop()
     fsync()
     writer.truncate(true)
+    writer.close
   }
 
   def position: Long = writer.position
