@@ -19,7 +19,7 @@ package com.twitter.libkestrel
 import com.twitter.conversions.storage._
 import com.twitter.util._
 import java.io.{File, FileInputStream, IOException}
-import java.nio.{ByteBuffer, ByteOrder}
+import java.nio.{ByteBuffer, ByteOrder, MappedByteBuffer}
 import java.nio.channels.FileChannel
 import java.util.concurrent.ScheduledExecutorService
 
@@ -58,32 +58,36 @@ object JournalFile {
     }
   }
 
-  def append(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
-    val journal = new JournalFile(file, scheduler, syncJournal)
-    journal.openForAppend()
+  def append(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration,
+             maxFileSize: StorageUnit) = {
+    val position = file.length()
+//println("open " + file + " for append @ " + position)
+    val journal = new JournalFile(file, scheduler, syncJournal, Some(maxFileSize))
+    journal.openForAppend(position)
     journal
   }
 
-  def createWriter(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
-    val journal = new JournalFile(file, scheduler, syncJournal)
+  def createWriter(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration,
+                   maxFileSize: StorageUnit) = {
+    val journal = new JournalFile(file, scheduler, syncJournal, Some(maxFileSize))
     journal.create(HEADER_WRITER)
     journal
   }
 
   def createReader(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
-    val journal = new JournalFile(file, scheduler, syncJournal)
+    val journal = new JournalFile(file, scheduler, syncJournal, None)
     journal.create(HEADER_READER)
     journal
   }
 
   def openWriter(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
-    val journal = new JournalFile(file, scheduler, syncJournal)
+    val journal = new JournalFile(file, scheduler, syncJournal, None)
     if (journal.openForRead() != HEADER_WRITER) throw new IOException("Not a writer journal file")
     journal
   }
 
   def openReader(file: File, scheduler: ScheduledExecutorService, syncJournal: Duration) = {
-    val journal = new JournalFile(file, scheduler, syncJournal)
+    val journal = new JournalFile(file, scheduler, syncJournal, None)
     if (journal.openForRead() != HEADER_READER) throw new IOException("Not a reader journal file")
     journal
   }
@@ -98,34 +102,34 @@ object JournalFile {
   }
 }
 
-class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJournal: Duration)
+class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJournal: Duration,
+                  val maxFileSize: Option[StorageUnit])
   extends Iterable[JournalFile.Record]
 {
   import JournalFile._
 
   private[this] var writer: PeriodicSyncFile = null
-  private[this] var reader: FileChannel = null
+  private[this] var reader: MappedByteBuffer = null
 
-  def openForAppend() {
-    writer = new PeriodicSyncFile(file, scheduler, syncJournal)
+  def openForAppend(position: Long) {
+    writer = new PeriodicSyncFile(file, scheduler, syncJournal, maxFileSize)
+    writer.position = position
   }
 
   def openForRead() = {
-    reader = new FileInputStream(file).getChannel
-    val b = buffer
-    b.limit(4)
-    b.order(ByteOrder.BIG_ENDIAN)
-    var x = 0
-    do {
-      x = reader.read(b)
-    } while (b.position < b.limit && x >= 0)
-    if (x < 0) throw new CorruptedJournalException(0, file, "No header in journal file: " + file)
-    b.flip()
-    b.getInt()
+    val channel = new FileInputStream(file).getChannel
+    reader = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size)
+    channel.close()
+//println("reading from " + file)
+    if (reader.remaining < 4) throw new CorruptedJournalException(0, file, "No header in journal file: " + file)
+    reader.order(ByteOrder.BIG_ENDIAN)
+    val magic = reader.getInt
+    reader.order(ByteOrder.LITTLE_ENDIAN)
+    magic
   }
 
   def create(header: Int) {
-    writer = new PeriodicSyncFile(file, scheduler, syncJournal)
+    writer = new PeriodicSyncFile(file, scheduler, syncJournal, maxFileSize)
     writer.position = 0
     writer.truncate()
     val b = buffer(4)
@@ -137,12 +141,16 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
 
   def close() {
     if (writer ne null) writer.close()
-    if (reader ne null) reader.close()
+    if (reader ne null) reader = null
   }
 
   private[this] val READ_HEAD = 0
   private[this] val PUT = 8
   private[this] val READ_DONE = 9
+
+  def storageSizeOf(item: QueueItem): Int = {
+    (if (item.expireTime.isDefined) 8 else 6) * 4 + 1 + item.dataSize
+  }
 
   def put(item: QueueItem): Future[Unit] = {
     if (item.dataSize > LARGEST_DATA.inBytes) {
@@ -183,86 +191,79 @@ class JournalFile(val file: File, scheduler: ScheduledExecutorService, syncJourn
   }
 
   def readNext(): Option[Record] = {
+//println("reader: " + reader + "; remaining: " + reader.remaining)
     val lastPosition = reader.position
-    val b = buffer
-    b.limit(1)
-    var x: Int = 0
-    try {
-      do {
-        x = reader.read(b)
-      } while (b.position < b.limit && x >= 0)
-    } catch {
-      case e: IOException =>
-        throw new CorruptedJournalException(lastPosition, file, e.toString)
+
+    if (reader.remaining < 1) {
+      return None
     }
-    if (x < 0) return None
-    val command = (b.get(0) >> 4) & 0xf
-    val headerSize = (b.get(0) & 0xf)
-    b.clear()
-    b.limit(headerSize * 4)
-    try {
-      do {
-        x = reader.read(b)
-      } while (b.position < b.limit && x >= 0)
-    } catch {
-      case e: IOException =>
-        throw new CorruptedJournalException(lastPosition, file, e.toString)
+    val commandAndHeaderSize = reader.get
+    if (commandAndHeaderSize == 0) {
+      reader.position(lastPosition)
+      return None
     }
-    b.rewind()
+
+    val command = (commandAndHeaderSize >> 4) & 0xf
+    val headerSize = (commandAndHeaderSize & 0xf)
+
+//println("%x %x %d".format(commandAndHeaderSize, command, headerSize))
+    if (reader.remaining < headerSize * 4) {
+      throw new CorruptedJournalException(lastPosition, file, "truncated header: %d left".format(reader.remaining))
+    }
 
     var dataBuffer: ByteBuffer = null
+    var dataSize = 0
     if (command >= 8) {
-      val dataSize = b.getInt()
+      dataSize = reader.getInt
       if (dataSize > LARGEST_DATA.inBytes) {
         throw new CorruptedJournalException(lastPosition, file, "item too large")
       }
 
-      dataBuffer = ByteBuffer.allocate(dataSize)
-      try {
-        do {
-          x = reader.read(dataBuffer)
-        } while (dataBuffer.position < dataBuffer.limit && x >= 0)
-      } catch {
-        case e: IOException =>
-          throw new CorruptedJournalException(lastPosition, file, e.toString)
+      val remainingHeaderSize = (headerSize - 1) * 4
+      if (reader.remaining < dataSize + remainingHeaderSize) {
+        throw new CorruptedJournalException(lastPosition, file, "truncated entry")
       }
-      dataBuffer.rewind
     }
-
-    if (x < 0) throw new CorruptedJournalException(lastPosition, file, "truncated entry")
 
     Some(command match {
       case READ_HEAD => {
-        if (b.limit < 8) {
+        if (reader.remaining < 8) {
           throw new CorruptedJournalException(lastPosition, file, "corrupted READ_HEAD")
         }
-        val id = b.getLong()
+        val id = reader.getLong()
         Record.ReadHead(id)
       }
       case PUT => {
-        if (b.limit < 24) {
+        if (reader.remaining < 20) {
           throw new CorruptedJournalException(lastPosition, file, "corrupted PUT")
         }
-        val errorCount = b.getInt()
-        val id = b.getLong()
-        val addTime = b.getLong()
-        val expireTime = if (b.position + 4 <= b.limit) Some(b.getLong()) else None
+        val errorCount = reader.getInt()
+        val id = reader.getLong()
+        val addTime = reader.getLong()
+        val expireTime = if (headerSize > 6) Some(reader.getLong()) else None
+
+        // record current position; modify limit to the end of data; make slice; restore reader
+        reader.limit(reader.position + dataSize)
+        dataBuffer = reader.slice()
+        reader.limit(reader.capacity)
+
+        // advance reader past data
+        reader.position(reader.position + dataSize)
         Record.Put(QueueItem(id, Time.fromMilliseconds(addTime), expireTime.map { t =>
           Time.fromMilliseconds(t)
         }, dataBuffer, errorCount))
       }
       case READ_DONE => {
-        if (dataBuffer.remaining % 8 != 0) {
+        if (dataSize % 8 != 0) {
           throw new CorruptedJournalException(lastPosition, file, "corrupted READ_DONE")
         }
-        val ids = new Array[Long](dataBuffer.remaining / 8)
-        val b = dataBuffer
-        b.order(ByteOrder.LITTLE_ENDIAN)
-        for (i <- 0 until ids.size) { ids(i) = b.getLong() }
+        val ids = new Array[Long](dataSize / 8)
+        for (i <- 0 until ids.size) { ids(i) = reader.getLong() }
         Record.ReadDone(ids)
       }
       case _ => {
         // this is okay. we can skip the ones we don't know.
+        reader.position(reader.position + dataSize)
         Record.Unknown(command)
       }
     })

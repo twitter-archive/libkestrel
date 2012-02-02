@@ -16,6 +16,7 @@
 
 package com.twitter.libkestrel
 
+import com.twitter.conversions.storage._
 import com.twitter.io.Files
 import com.twitter.util._
 import java.io._
@@ -60,7 +61,7 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
       it("write") {
         val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue)
+        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
         j.put(putItem)
         j.close()
         assert(hex(readFile(testFile)) === putData)
@@ -109,10 +110,10 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
         val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, ByteBuffer.wrap("goodbye".getBytes), 0)
 
         val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue)
+        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
         j.put(putItem1)
         j.close()
-        val j2 = JournalFile.append(testFile, null, Duration.MaxValue)
+        val j2 = JournalFile.append(testFile, null, Duration.MaxValue, 16.kilobytes)
         j2.put(putItem2)
         j2.close()
 
@@ -199,7 +200,7 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
     it("refuse to deal with items too large") {
       val testFile = new File(testFolder, "a1")
-      writeFile(testFile, unhex("27 64 26 3 85 ff ff ff 7f"))
+      writeFile(testFile, unhex("27 64 26 3 81 ff ff ff 7f"))
 
       val j = JournalFile.openWriter(testFile, null, Duration.MaxValue)
       val e = intercept[CorruptedJournalException] { j.readNext() }
@@ -207,7 +208,7 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
       val item = QueueItem(100, Time.fromMilliseconds(0), None,
         ByteBuffer.allocate(JournalFile.LARGEST_DATA.inBytes.toInt + 1))
-      val j2 = JournalFile.createWriter(testFile, null, Duration.MaxValue)
+      val j2 = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
       val e2 = intercept[IOException] { j2.put(item) }
       assert(e2.getMessage === "item too large")
     }

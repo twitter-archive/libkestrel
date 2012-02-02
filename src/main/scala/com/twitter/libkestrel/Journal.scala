@@ -234,7 +234,7 @@ class Journal(
     if (idMap.size > 0) {
       val (id, fileInfo) = idMap.last
       try {
-        _journalFile = JournalFile.append(fileInfo.file, scheduler, syncJournal)
+        _journalFile = JournalFile.append(fileInfo.file, scheduler, syncJournal, maxFileSize)
         _tailId = fileInfo.tailId
         currentItems = fileInfo.items
         currentBytes = fileInfo.bytes
@@ -276,6 +276,7 @@ class Journal(
   }
 
   private[this] def rotate() {
+//println("rotate!")
     if (_journalFile ne null) {
       // fix up id map to have the new item/byte count
       idMap.last match { case (id, info) =>
@@ -290,7 +291,7 @@ class Journal(
       log.info("Rotating %s from %s (%s) to %s", queueName, _journalFile.file,
         _journalFile.position.bytes.toHuman, newFile)
     }
-    _journalFile = JournalFile.createWriter(newFile, scheduler, syncJournal)
+    _journalFile = JournalFile.createWriter(newFile, scheduler, syncJournal, maxFileSize)
     currentItems = 0
     currentBytes = 0
     idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
@@ -341,7 +342,9 @@ class Journal(
   }
 
   def journalSize: Long = {
-    writerFiles().foldLeft(0L) { (sum, file) => sum + file.length() }
+    val files = writerFiles()
+    val fileSizes = files.foldLeft(0L) { (sum, file) => sum + file.length() }
+    fileSizes - files.last.length() + _journalFile.position
   }
 
   def tail = _tailId
@@ -380,13 +383,15 @@ class Journal(
     f: QueueItem => Unit = { _ => () }
   ): Future[(QueueItem, Future[Unit])] = {
     serialized {
-      _tailId += 1
-      val id = _tailId
-      val item = QueueItem(_tailId, addTime, expireTime, data, errorCount)
+      val id = _tailId + 1
+      val item = QueueItem(id, addTime, expireTime, data, errorCount)
+//println("putting at " + _journalFile.position + " with " + _journalFile.storageSizeOf(item) + " against " + maxFileSize.inBytes)
+      if (_journalFile.position + _journalFile.storageSizeOf(item) > maxFileSize.inBytes) rotate()
+
+      _tailId = id
       val future = _journalFile.put(item)
       currentItems += 1
       currentBytes += data.remaining
-      if (_journalFile.position >= maxFileSize.inBytes) rotate()
       // give the caller a chance to run some other code serialized:
       f(item)
       (item, future)
@@ -504,6 +509,7 @@ class Journal(
      * file. This means the queue no longer wants to try keeping every item in memory.
      */
     def startReadBehind(id: Long) {
+//println("start read behind")
       readBehind = Some(new Scanner(id, followFiles = true, logIt = true))
     }
 
@@ -512,6 +518,7 @@ class Journal(
      * If we've caught up, turn off read-behind and return None.
      */
     def nextReadBehind(): Option[QueueItem] = {
+//println("next read behind")
       val rv = readBehind.get.next()
       if (rv == None) readBehind = None
       rv
@@ -521,6 +528,7 @@ class Journal(
      * End read-behind mode, and close any open journal file.
      */
     def endReadBehind() {
+//println("end read behind")
       readBehind.foreach { _.end() }
       readBehind = None
     }
@@ -561,12 +569,14 @@ class Journal(
           end()
           return None
         }
+//println("reading next")
         journalFile.readNext() match {
           case None => {
             journalFile.close()
             if (followFiles) {
               val fileInfo = fileInfoForId(id + 1)
               if (!fileInfo.isDefined) throw new IOException("Unknown id")
+//println("advance read behind to " + fileInfo.get.file)
               if (logIt) log.debug("Read-behind for %s+%s moving to: %s", queueName, name, fileInfo.get.file)
               journalFile = JournalFile.openWriter(fileInfo.get.file, scheduler, syncJournal)
               next()
@@ -584,6 +594,7 @@ class Journal(
       }
 
       def end() {
+//println("end read behind internally")
         if (logIt) log.info("Leaving read-behind for %s+%s", queueName, name)
         if (journalFile ne null) journalFile.close()
       }

@@ -54,8 +54,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   def haveId(id: Long) = new Matcher[ByteBuffer]() {
     def apply(buffer: ByteBuffer) = MatchResult(
       {
+        buffer.mark
         buffer.order(ByteOrder.BIG_ENDIAN)
-        buffer.getLong() == id
+        try {
+          buffer.getLong() == id
+        } finally {
+          buffer.reset
+        }
       },
       "data " + bufferToBytes(buffer) + " doesn't match id " + id,
       "data " + bufferToBytes(buffer) + " matches id " + id
@@ -82,7 +87,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   def setupWriteJournals(itemsPerJournal: Int, journals: Int, expiredItems: Int = 0) {
     var id = 1L
     (0 until journals).foreach { journalId =>
-      val jf = JournalFile.createWriter(new File(testFolder, "test." + journalId), null, Duration.MaxValue)
+      val jf = JournalFile.createWriter(new File(testFolder, "test." + journalId), null, Duration.MaxValue, 16.kilobytes)
       (0 until itemsPerJournal).foreach { n =>
         val x = makeId(id, 1024)
         if (id <= expiredItems) {
@@ -420,7 +425,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val q = makeQueue(config = config.copy(journalSize = 1.kilobyte))
       val reader = q.reader("")
       (1 to 5).foreach { id =>
-        q.put(makeId(id, 512), Time.now, None)
+        q.put(makeId(id, 475), Time.now, None)
 
         val item = reader.get(None)()
         assert(item.isDefined)
