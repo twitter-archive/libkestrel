@@ -71,7 +71,7 @@ class StreamSyncFileWriter(file: File) extends SyncFileWriter {
 }
 
 class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWriter {
-  val writer = {
+  var writer = {
     val channel = new RandomAccessFile(file, "rw").getChannel
     val map = channel.map(FileChannel.MapMode.READ_WRITE, 0, size.inBytes)
     channel.close
@@ -118,6 +118,7 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWrite
     // force unmap -- illegal to access writer after this point (the JVM *will* segfault or you'll be accessing
     // some other file recently mapped to the same memory space)
     writer.asInstanceOf[sun.nio.ch.DirectBuffer].cleaner().clean()
+    writer = null
   }
 }
 
