@@ -26,7 +26,7 @@ case class QueueItem(
   data: ByteBuffer,
   errorCount: Int = 0
 ) {
-  val dataSize = data.limit - data.position
+  val dataSize = data.remaining
 
   override def equals(other: Any) = {
     other match {

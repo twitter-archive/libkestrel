@@ -432,7 +432,7 @@ class JournaledQueue(
         }.getOrElse(false)
 
         if (!inReadBehind) {
-          queue.put(item)
+          queue.put(item.copy(data = item.data.duplicate()))
           memoryItems += 1
           memoryBytes += item.dataSize
         }
@@ -528,10 +528,12 @@ class JournaledQueue(
               age = Time.now - item.addTime
               if (peeking) {
                 queue.putHead(item)
+                Future.value(Some(item.copy(data = item.data.duplicate())))
               } else {
                 openReads.put(item.id, item)
+                item.data.mark()
+                Future.value(s)
               }
-              Future.value(s)
             }
           }
         }
@@ -576,6 +578,7 @@ class JournaledQueue(
         log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
         return
       }
+      item.data.reset()
       val newItem = item.copy(errorCount = item.errorCount + 1)
       if (readerConfig.errorHandler(newItem)) {
         commitItem(newItem)
