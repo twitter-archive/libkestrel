@@ -368,7 +368,7 @@ class JournalSpec extends Spec with ShouldMatchers with TempFolder with TestLogg
         val file1 = new File(testFolder, "test." + time1)
         val file2 = new File(testFolder, "test." + time2)
         val defaultReader = new File(testFolder, "test.read.")
-        assert(testFolder.list.toList === List(file1, file2, defaultReader).map { _.getName() })
+        assert(testFolder.list.sorted.toList === List(file1, file2, defaultReader).map { _.getName() })
         assert(JournalFile.openWriter(file1, null, Duration.MaxValue).toList === List(
           JournalFile.Record.Put(QueueItem(1L, Time.fromMilliseconds(time1), None, new Array[Byte](512))),
           JournalFile.Record.Put(QueueItem(2L, Time.fromMilliseconds(time2), None, new Array[Byte](512)))
