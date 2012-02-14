@@ -27,7 +27,7 @@ import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import config._
 
-class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
+class JournaledQueueSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 
@@ -87,7 +87,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
   def setupWriteJournals(itemsPerJournal: Int, journals: Int, expiredItems: Int = 0) {
     var id = 1L
     (0 until journals).foreach { journalId =>
-      val jf = JournalFile.createWriter(new File(testFolder, "test." + journalId), null, Duration.MaxValue, 16.kilobytes)
+      val jf = JournalFile.create(new File(testFolder, "test." + journalId), null, Duration.MaxValue, 16.kilobytes)
       (0 until itemsPerJournal).foreach { n =>
         val x = makeId(id, 1024)
         if (id <= expiredItems) {
@@ -101,11 +101,11 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
     }
   }
 
-  def setupReadJournal(clientName: String, headId: Long, doneIds: Seq[Long] = Nil) {
-    val jf = JournalFile.createReader(new File(testFolder, "test.read." + clientName), null, Duration.MaxValue)
-    jf.readHead(headId)
-    jf.readDone(doneIds)
-    jf.close()
+  def setupBookmarkFile(clientName: String, headId: Long, doneIds: Seq[Long] = Nil) {
+    val bf = BookmarkFile.create(new File(testFolder, "test.read." + clientName))
+    bf.readHead(headId)
+    bf.readDone(doneIds)
+    bf.close()
   }
 
   describe("JournaledQueue") {
@@ -116,6 +116,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(new File(testFolder, "test." + Time.now.inMilliseconds).exists)
         reader.checkpoint()
         assert(new File(testFolder, "test.read.").exists)
+        reader.close()
         q.close()
       }
     }
@@ -125,6 +126,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       intercept[Exception] { makeQueue(config = config.copy(name = "evil^queue")) }
       intercept[Exception] { makeQueue(config = config.copy(name = "evilqueue ")) }
       intercept[Exception] { makeQueue(config = config.copy(name = "evil.queue")) }
+      q.close()
     }
 
     it("won't re-create the default reader if a named reader is created") {
@@ -132,6 +134,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       val reader1 = q.reader("")
       val reader2 = q.reader("client1")
       intercept[Exception] { q.reader("") }
+      q.close()
     }
 
     it("can destroy a reader") {
@@ -154,6 +157,8 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       q.reader("")
       assert(new File(testFolder, "test.read.").exists)
+      q.reader("").close()
+      q.close()
     }
 
     it("starts new readers at the end of the queue") {
@@ -164,13 +169,14 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(reader.bytes === 0)
       assert(reader.memoryItems === 0)
       assert(reader.memoryBytes === 0)
+      reader.close()
       q.close()
     }
 
     describe("can read existing journals") {
       it("small") {
         setupWriteJournals(4, 2)
-        setupReadJournal("", 3L)
+        setupBookmarkFile("", 3L)
         val q = makeQueue()
         val reader = q.reader("")
 
@@ -182,13 +188,14 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(item.isDefined)
         item.get.data should haveId(4L)
         assert(item.get.id === 4L)
+        reader.close()
         q.close()
       }
 
       it("in read-behind") {
         setupWriteJournals(4, 2)
         (0L to 4L).foreach { readId =>
-          setupReadJournal("", readId)
+          setupBookmarkFile("", readId)
           val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
           val q = makeQueue(readerConfig = readerConfig)
           val reader = q.reader("")
@@ -197,13 +204,14 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
           assert(reader.bytes === (8 - readId) * 1024)
           assert(reader.memoryItems === 4)
           assert(reader.memoryBytes === 4 * 1024)
+          reader.close()
           q.close()
         }
       }
 
       it("with a caught-up reader") {
         setupWriteJournals(4, 2)
-        setupReadJournal("", 8L)
+        setupBookmarkFile("", 8L)
         val q = makeQueue()
         val reader = q.reader("")
 
@@ -218,7 +226,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("moves into and then out of read-behind") {
       setupWriteJournals(0, 0)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
       val q = makeQueue(readerConfig = readerConfig)
       val reader = q.reader("")
@@ -268,7 +276,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("fills read-behind as items are removed") {
       setupWriteJournals(4, 2)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
       val q = makeQueue(readerConfig = readerConfig)
       val reader = q.reader("")
@@ -307,7 +315,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("tracks open reads") {
       setupWriteJournals(4, 1)
-      setupReadJournal("", 3)
+      setupBookmarkFile("", 3)
       val q = makeQueue()
       val reader = q.reader("")
 
@@ -331,7 +339,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("gives returned items to the next reader") {
       setupWriteJournals(4, 1)
-      setupReadJournal("", 3)
+      setupBookmarkFile("", 3)
       val q = makeQueue()
       val reader = q.reader("")
 
@@ -372,10 +380,11 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       val q2 = makeQueue()
       assert(q2.reader("").items === 0)
-      assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
-        JournalFile.Record.ReadHead(2L),
-        JournalFile.Record.ReadDone(Array[Long]())
+      assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
+        Record.ReadHead(2L),
+        Record.ReadDone(Array[Long]())
       ))
+      q2.close()
     }
 
     it("re-delivers aborted reads") {
@@ -394,6 +403,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(item2.isDefined)
       assert(item2.get.id === 1)
       assert(bufferToString(item2.get.data) == "first")
+      q.close()
     }
 
     it("hands off reads that keep getting aborted") {
@@ -419,6 +429,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       val item3 = reader.get(None)()
       assert(!item3.isDefined)
+      q.close()
     }
 
     it("can recover from stale checkpoints") {
@@ -437,17 +448,22 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       }
 
       // emulate a crashed server by not closing the old queue.
+      MemoryMappedFile.reset()
+
       // all journal files will be erased except #3, so reader should resume there.
       val q2 = makeQueue(config = config.copy(journalSize = 1.kilobyte))
       val reader2 = q2.reader("")
       val item = reader2.get(None)()
       assert(item.isDefined)
       assert(item.get.id === 3)
+
+      q2.close()
+      q.close()
     }
 
     it("peek") {
       setupWriteJournals(4, 1)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val q = makeQueue()
       val reader = q.reader("")
 
@@ -463,7 +479,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("expires old items") {
       setupWriteJournals(4, 1, expiredItems = 1)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val q = makeQueue()
       val reader = q.reader("")
 
@@ -491,6 +507,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(reader.get(None)() === None)
         assert(received.isDefined)
         assert(bufferToString(received.get.data) === "dead!")
+        q.close()
       }
     }
 
@@ -533,12 +550,13 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         timeMutator.advance(1.second)
         assert(q.reader("").get(None)() === None)
+        q.close()
       }
     }
 
     it("saves archived journals") {
       setupWriteJournals(4, 2)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val q = makeQueue(config = config.copy(saveArchivedJournals = Some(testFolder)))
       val reader = q.reader("")
 
@@ -551,6 +569,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       assert(new File(testFolder, "archive~test.0").exists)
       assert(!new File(testFolder, "test.0").exists)
       assert(new File(testFolder, "test.1").exists)
+      q.close()
     }
 
     it("tracks age") {
@@ -570,13 +589,14 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(item2.isDefined)
         reader.commit(item2.get.id)
         assert(reader.age === 0.milliseconds)
+        q.close()
       }
     }
 
     describe("checkpoint") {
       it("on close") {
         setupWriteJournals(4, 1)
-        setupReadJournal("", 0)
+        setupBookmarkFile("", 0)
         val q = makeQueue()
         val reader = q.reader("")
 
@@ -595,14 +615,14 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
       it("on timer") {
         setupWriteJournals(4, 1)
-        setupReadJournal("", 0)
+        setupBookmarkFile("", 0)
         val q = makeQueue(config = config.copy(checkpointTimer = 5.milliseconds))
         val reader = q.reader("")
 
         assert(reader.items === 4)
-        assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
-          JournalFile.Record.ReadHead(0L),
-          JournalFile.Record.ReadDone(Array[Long]())
+        assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
+          Record.ReadHead(0L),
+          Record.ReadDone(Array[Long]())
         ))
 
         val item = reader.get(None)()
@@ -612,9 +632,9 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
         Thread.sleep(100)
 
-        assert(JournalFile.openReader(new File(testFolder, "test.read."), null, Duration.MaxValue).toList === List(
-          JournalFile.Record.ReadHead(1L),
-          JournalFile.Record.ReadDone(Array[Long]())
+        assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
+          Record.ReadHead(1L),
+          Record.ReadDone(Array[Long]())
         ))
         q.close()
       }
@@ -696,6 +716,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       it("refuses too-large items") {
         val q = makeQueue(config = config.copy(maxItemSize = 1.kilobyte))
         assert(q.put(ByteBuffer.allocate(1025), Time.now, None) === None)
+        q.close()
       }
 
       it("honors maxItems") {
@@ -754,7 +775,7 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
 
     it("erases journals when asked") {
       setupWriteJournals(4, 3)
-      setupReadJournal("", 0)
+      setupBookmarkFile("", 0)
       val q = makeQueue()
       val reader = q.reader("")
 
@@ -763,7 +784,6 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
       q.erase()
       assert(!new File(testFolder, "test.1").exists)
       assert(!new File(testFolder, "test.read.").exists)
-      q.close()
     }
 
     describe("flushes items") {

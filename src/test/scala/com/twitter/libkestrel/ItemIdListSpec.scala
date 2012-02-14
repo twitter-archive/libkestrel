@@ -19,7 +19,7 @@ package com.twitter.libkestrel
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class ItemIdListSpec extends Spec {
+class ItemIdListSpec extends ResourceCheckingSuite {
   describe("ItemIdList") {
     it("add and pop") {
       val x = new ItemIdList()

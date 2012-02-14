@@ -24,10 +24,11 @@ import java.nio.ByteBuffer
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
-  def readFile(file: File) = {
+object FileHelper {
+  def readFile(file: File, limit: Int = Int.MaxValue) = {
     val f = new FileInputStream(file).getChannel
-    val bytes = new Array[Byte](file.length.toInt)
+    val length = limit min file.length.toInt
+    val bytes = new Array[Byte](length)
     val buffer = ByteBuffer.wrap(bytes)
     var x = 0
     do {
@@ -53,6 +54,10 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
   def unhex(s: String): Array[Byte] = {
     s.split(" ").map { x => Integer.parseInt(x, 16).toByte }.toArray
   }
+}
+
+class JournalFileSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+  import FileHelper._
 
   describe("JournalFile") {
     describe("put") {
@@ -61,7 +66,7 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
       it("write") {
         val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
+        val j = JournalFile.create(testFile, null, Duration.MaxValue, 16.kilobytes)
         j.put(putItem)
         j.close()
         assert(hex(readFile(testFile)) === putData)
@@ -70,8 +75,9 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
       it("read") {
         val testFile = new File(testFolder, "a1")
         writeFile(testFile, unhex(putData))
-        val j = JournalFile.openWriter(testFile, null, Duration.MaxValue)
-        assert(j.readNext() === Some(JournalFile.Record.Put(putItem)))
+        val j = JournalFile.open(testFile)
+        assert(j.readNext() === Some(Record.Put(putItem)))
+        j.close()
       }
 
       it("read corrupted") {
@@ -81,7 +87,12 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
           writeFile(testFile, data.slice(0, size))
           if (size != 4) {
             intercept[IOException] {
-              JournalFile.openWriter(testFile, null, Duration.MaxValue).readNext()
+              val j = JournalFile.open(testFile)
+              try {
+                j.readNext()
+              } finally {
+                j.close()
+              }
             }
           }
         }
@@ -96,10 +107,11 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
 
         val testFile = new File(testFolder, "a1")
         writeFile(testFile, unhex(headerData + " " + putData1 + " " + putData2))
-        val j = JournalFile.openWriter(testFile, null, Duration.MaxValue)
-        assert(j.readNext() === Some(JournalFile.Record.Put(putItem1)))
-        assert(j.readNext() === Some(JournalFile.Record.Put(putItem2)))
+        val j = JournalFile.open(testFile)
+        assert(j.readNext() === Some(Record.Put(putItem1)))
+        assert(j.readNext() === Some(Record.Put(putItem2)))
         assert(j.readNext() === None)
+        j.close()
       }
 
       it("append") {
@@ -110,7 +122,7 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
         val putItem2 = QueueItem(101, Time.fromMilliseconds(900), None, ByteBuffer.wrap("goodbye".getBytes), 0)
 
         val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
+        val j = JournalFile.create(testFile, null, Duration.MaxValue, 16.kilobytes)
         j.put(putItem1)
         j.close()
         val j2 = JournalFile.append(testFile, null, Duration.MaxValue, 16.kilobytes)
@@ -121,107 +133,21 @@ class JournalFileSpec extends Spec with ShouldMatchers with TempFolder with Test
       }
     }
 
-    describe("readHead") {
-      val readHeadData = "26 3c 26 3 2 ff 1 0 0 0 0 0 0"
-      val readHead = JournalFile.Record.ReadHead(511)
-
-      it("write") {
-        val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createReader(testFile, null, Duration.MaxValue)
-        j.readHead(511)
-        j.close()
-        assert(hex(readFile(testFile)) === readHeadData)
-      }
-
-      it("read") {
-        val testFile = new File(testFolder, "a1")
-        writeFile(testFile, unhex(readHeadData))
-        val j = JournalFile.openReader(testFile, null, Duration.MaxValue)
-        assert(j.readNext() === Some(readHead))
-      }
-
-      it("read corrupted") {
-        val testFile = new File(testFolder, "a1")
-        val data = unhex(readHeadData)
-        (0 until data.size).foreach { size =>
-          writeFile(testFile, data.slice(0, size))
-          if (size != 4) {
-            intercept[IOException] {
-              JournalFile.openReader(testFile, null, Duration.MaxValue).readNext()
-            }
-          }
-        }
-      }
-    }
-
-    describe("readDone") {
-      val readDoneData = "26 3c 26 3 91 18 0 0 0 a 0 0 0 0 0 0 0 14 0 0 0 0 0 0 0 1e 0 0 0 0 0 0 0"
-      val readDone = JournalFile.Record.ReadDone(Array(10, 20, 30))
-
-      it("write") {
-        val testFile = new File(testFolder, "a1")
-        val j = JournalFile.createReader(testFile, null, Duration.MaxValue)
-        j.readDone(List(10, 20, 30))
-        j.close()
-        assert(hex(readFile(testFile)) === readDoneData)
-      }
-
-      it("read") {
-        val testFile = new File(testFolder, "a1")
-        writeFile(testFile, unhex(readDoneData))
-        val j = JournalFile.openReader(testFile, null, Duration.MaxValue)
-        assert(j.readNext() === Some(readDone))
-      }
-
-      it("read corrupted") {
-        val testFile = new File(testFolder, "a1")
-        val data = unhex(readDoneData)
-        (0 until data.size).foreach { size =>
-          writeFile(testFile, data.slice(0, size))
-          if (size != 4) {
-            intercept[IOException] {
-              JournalFile.openReader(testFile, null, Duration.MaxValue).readNext()
-            }
-          }
-        }
-      }
-    }
-
-    it("whole read file") {
-      val fileData = "26 3c 26 3 91 8 0 0 0 2 0 1 0 0 0 0 0 2 0 0 1 0 0 0 0 0"
-      val testFile = new File(testFolder, "a1")
-      writeFile(testFile, unhex(fileData))
-
-      val j = JournalFile.openReader(testFile, null, Duration.MaxValue)
-      assert(j.readNext() === Some(JournalFile.Record.ReadDone(Array(65538))))
-      assert(j.readNext() === Some(JournalFile.Record.ReadHead(65536)))
-      assert(j.readNext() === None)
-    }
-
     it("refuse to deal with items too large") {
       val testFile = new File(testFolder, "a1")
       writeFile(testFile, unhex("27 64 26 3 81 ff ff ff 7f"))
 
-      val j = JournalFile.openWriter(testFile, null, Duration.MaxValue)
+      val j = JournalFile.open(testFile)
       val e = intercept[CorruptedJournalException] { j.readNext() }
       assert(e.message === "item too large")
+      j.close()
 
       val item = QueueItem(100, Time.fromMilliseconds(0), None,
-        ByteBuffer.allocate(JournalFile.LARGEST_DATA.inBytes.toInt + 1))
-      val j2 = JournalFile.createWriter(testFile, null, Duration.MaxValue, 16.kilobytes)
+        ByteBuffer.allocate(Record.LARGEST_DATA.inBytes.toInt + 1))
+      val j2 = JournalFile.create(testFile, null, Duration.MaxValue, 16.kilobytes)
       val e2 = intercept[IOException] { j2.put(item) }
       assert(e2.getMessage === "item too large")
-    }
-
-    it("be okay with commands it doesn't know") {
-      val fileData = "26 3c 26 3 f1 4 0 0 0 ff ff ff ff 2 0 40 0 0 0 0 0 0"
-      val testFile = new File(testFolder, "a1")
-      writeFile(testFile, unhex(fileData))
-
-      val j = JournalFile.openReader(testFile, null, Duration.MaxValue)
-      assert(j.readNext() === Some(JournalFile.Record.Unknown(15)))
-      assert(j.readNext() === Some(JournalFile.Record.ReadHead(16384)))
-      assert(j.readNext() === None)
+      j2.close()
     }
   }
 }

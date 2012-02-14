@@ -144,13 +144,15 @@ class JournaledQueue(
   def close() {
     closed = true
     readerMap.values.foreach { _.close() }
+    journal.foreach { _.close() }
   }
 
   /**
    * Close this queue and also erase any journal files.
    */
   def erase() {
-    close()
+    closed = true
+    readerMap.values.foreach { _.close() }
     journal.foreach { _.erase() }
   }
 

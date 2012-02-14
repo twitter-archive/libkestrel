@@ -78,7 +78,7 @@ class Journal(
   @volatile var idMap = immutable.TreeMap.empty[Long, FileInfo]
   @volatile var readerMap = immutable.Map.empty[String, Reader]
 
-  @volatile private[this] var _journalFile: JournalFile = null
+  @volatile private[this] var _journalFile: JournalFileWriter = null
 
   // last item added to the journal.
   // in theory, we should support rollover, but given 63 bits of ID space, even if a queue is
@@ -182,7 +182,7 @@ class Journal(
     var items = 0
     var bytes = 0L
     val journalFile = try {
-      JournalFile.openWriter(file, scheduler, syncJournal)
+      JournalFile.open(file)
     } catch {
       case e: IOException => {
         log.error(e, "Unable to open journal %s; aborting!", file)
@@ -195,7 +195,7 @@ class Journal(
       journalFile.foreach { entry =>
         val position = journalFile.position
         entry match {
-          case JournalFile.Record.Put(item) => {
+          case Record.Put(item) => {
             if (firstId == None) firstId = Some(item.id)
             items += 1
             bytes += item.dataSize
@@ -276,7 +276,6 @@ class Journal(
   }
 
   private[this] def rotate() {
-//println("rotate!")
     if (_journalFile ne null) {
       // fix up id map to have the new item/byte count
       idMap.last match { case (id, info) =>
@@ -290,8 +289,9 @@ class Journal(
     } else {
       log.info("Rotating %s from %s (%s) to %s", queueName, _journalFile.file,
         _journalFile.position.bytes.toHuman, newFile)
+      _journalFile.close()
     }
-    _journalFile = JournalFile.createWriter(newFile, scheduler, syncJournal, maxFileSize)
+    _journalFile = JournalFile.create(newFile, scheduler, syncJournal, maxFileSize)
     currentItems = 0
     currentBytes = 0
     idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
@@ -385,7 +385,6 @@ class Journal(
     serialized {
       val id = _tailId + 1
       val item = QueueItem(id, addTime, expireTime, data, errorCount)
-//println("putting at " + _journalFile.position + " with " + _journalFile.storageSizeOf(item) + " against " + maxFileSize.inBytes)
       if (_journalFile.position + _journalFile.storageSizeOf(item) > maxFileSize.inBytes) rotate()
 
       _tailId = id
@@ -415,17 +414,17 @@ class Journal(
     private[this] var readBehind: Option[Scanner] = None
 
     def readState() {
-      val journalFile = JournalFile.openReader(file, scheduler, syncJournal)
+      val bookmarkFile = BookmarkFile.open(file)
       try {
-        journalFile.foreach { entry =>
+        bookmarkFile.foreach { entry =>
           entry match {
-            case JournalFile.Record.ReadHead(id) => _head = id
-            case JournalFile.Record.ReadDone(ids) => _doneSet ++= ids
+            case Record.ReadHead(id) => _head = id
+            case Record.ReadDone(ids) => _doneSet ++= ids
             case x => log.warning("Skipping unknown entry %s in read journal: %s", x, file)
           }
         }
       } finally {
-        journalFile.close()
+        bookmarkFile.close()
       }
       _head = (_head min _tailId) max (earliestHead - 1)
       _doneSet.retain { id => id <= _tailId && id > _head }
@@ -454,10 +453,10 @@ class Journal(
           val doneSet = _doneSet
           log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.toSeq.sorted.mkString(","))
           val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
-          val newJournalFile = JournalFile.createReader(newFile, scheduler, syncJournal)
-          newJournalFile.readHead(head)
-          newJournalFile.readDone(doneSet.toSeq.sorted)
-          newJournalFile.close()
+          val newBookmarkFile = BookmarkFile.create(newFile)
+          newBookmarkFile.readHead(head)
+          newBookmarkFile.readDone(doneSet.toSeq.sorted)
+          newBookmarkFile.close()
           newFile.renameTo(file)
         }
       }
@@ -509,7 +508,6 @@ class Journal(
      * file. This means the queue no longer wants to try keeping every item in memory.
      */
     def startReadBehind(id: Long) {
-//println("start read behind")
       readBehind = Some(new Scanner(id, followFiles = true, logIt = true))
     }
 
@@ -518,7 +516,6 @@ class Journal(
      * If we've caught up, turn off read-behind and return None.
      */
     def nextReadBehind(): Option[QueueItem] = {
-//println("next read behind")
       val rv = readBehind.get.next()
       if (rv == None) readBehind = None
       rv
@@ -528,7 +525,6 @@ class Journal(
      * End read-behind mode, and close any open journal file.
      */
     def endReadBehind() {
-//println("end read behind")
       readBehind.foreach { _.end() }
       readBehind = None
     }
@@ -537,14 +533,14 @@ class Journal(
      * Scan forward through journals from a specific starting point.
      */
     class Scanner(startId: Long, followFiles: Boolean = true, logIt: Boolean = false) {
-      private[this] var journalFile: JournalFile = _
+      private[this] var journalFile: JournalFileReader = _
       var id = 0L
 
       start()
 
       def start() {
         val fileInfo = fileInfoForId(startId).getOrElse { idMap(earliestHead) }
-        val jf = JournalFile.openWriter(fileInfo.file, scheduler, syncJournal)
+        val jf = JournalFile.open(fileInfo.file)
         if (startId >= earliestHead) {
           var lastId = -1L
           while (lastId < startId) {
@@ -554,7 +550,7 @@ class Journal(
                 id = tail
                 return
               }
-              case Some(JournalFile.Record.Put(QueueItem(id, _, _, _, _))) => lastId = id
+              case Some(Record.Put(QueueItem(id, _, _, _, _))) => lastId = id
               case _ =>
             }
           }
@@ -569,23 +565,23 @@ class Journal(
           end()
           return None
         }
-//println("reading next")
+
         journalFile.readNext() match {
           case None => {
             journalFile.close()
+            journalFile = null
             if (followFiles) {
               val fileInfo = fileInfoForId(id + 1)
               if (!fileInfo.isDefined) throw new IOException("Unknown id")
-//println("advance read behind to " + fileInfo.get.file)
               if (logIt) log.debug("Read-behind for %s+%s moving to: %s", queueName, name, fileInfo.get.file)
-              journalFile = JournalFile.openWriter(fileInfo.get.file, scheduler, syncJournal)
+              journalFile = JournalFile.open(fileInfo.get.file)
               next()
             } else {
               end()
               None
             }
           }
-          case Some(JournalFile.Record.Put(item)) => {
+          case Some(Record.Put(item)) => {
             id = item.id
             Some(item)
           }
@@ -594,9 +590,11 @@ class Journal(
       }
 
       def end() {
-//println("end read behind internally")
         if (logIt) log.info("Leaving read-behind for %s+%s", queueName, name)
-        if (journalFile ne null) journalFile.close()
+        if (journalFile ne null) {
+          journalFile.close()
+          journalFile = null
+        }
       }
     }
   }

@@ -1,5 +1,6 @@
 package com.twitter.libkestrel
 
+import com.twitter.conversions.storage._
 import com.twitter.conversions.time._
 import com.twitter.util._
 import java.io.{IOException, File, FileOutputStream, RandomAccessFile}
@@ -38,87 +39,48 @@ extends Runnable {
 }
 
 object PeriodicSyncFile {
+  def create(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit) = {
+    new PeriodicSyncFile(file, scheduler, period, maxFileSize, true)
+  }
+
+  def append(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit) = {
+    new PeriodicSyncFile(file, scheduler, period, maxFileSize, false)
+  }
+
   // FIXME
   // override me to track fsync delay metrics
   val addTiming: Duration => Unit = { _ => }
 }
 
-trait SyncFileWriter {
-  def force(): Unit
-  def position: Long
-  def position(p: Long): Unit
-  def truncate(onClose: Boolean): Unit
-  def write(buffer: ByteBuffer): Unit
-  def close(): Unit
-}
+class MMappedSyncFileWriter(file: File, size: StorageUnit, truncate: Boolean) {
+  private[this] val memMappedFile = MemoryMappedFile.map(file, size, truncate)
+  var writer = memMappedFile.buffer()
 
-class StreamSyncFileWriter(file: File) extends SyncFileWriter {
-  val writer = new FileOutputStream(file, true).getChannel
-
-  def force() { writer.force(false) }
-
-  def position = writer.position
-  def position(p: Long) { writer.position(p) }
-  def truncate(onClose: Boolean) { writer.truncate(writer.position) }
-
-  def write(buffer: ByteBuffer) {
-    do {
-      writer.write(buffer)
-    } while(buffer.position < buffer.limit)
-  }
-
-  def close() { writer.close() }
-}
-
-class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWriter {
-  var writer = {
-    val channel = new RandomAccessFile(file, "rw").getChannel
-    val map = channel.map(FileChannel.MapMode.READ_WRITE, 0, size.inBytes)
-    channel.close
-    map
-  }
-
-  def force() { writer.force() }
+  def force() { memMappedFile.force() }
 
   def position = writer.position.toLong
 
-  // TODO: make it impossible to overflow this position
+  // overflow -> IllegalArgumentException
   def position(p: Long) { writer.position(p.toInt) }
 
   def write(buffer: ByteBuffer) {
+    val startPos = writer.position
+    writer.put(0.toByte)
+    val startByte = buffer.get
     writer.put(buffer)
+    writer.put(startPos, startByte)
   }
 
-  def truncate(onClose: Boolean) {
-    if (onClose) {
-      Some(new RandomAccessFile(file, "rw")).foreach { f =>
-//println("truncating " + file + " on close to " + writer.position)
-        f.setLength(writer.position)
-        f.close()
-      }
-    } else {
-//println("truncating " + file + " to " + writer.position)
-      // TODO: fugly; truncate is only used on create so get rid of it
-      writer.mark()
-      val size = 16 * 1024
-      val trunc = ByteBuffer.wrap(new Array[Byte](size))
-      while(writer.remaining >= size) {
-        writer.put(trunc)
-        trunc.flip()
-      }
-      if (writer.remaining > 0) {
-        trunc.limit(writer.remaining)
-        writer.put(trunc)
-      }
-      writer.reset()
+  def truncate() {
+    Some(new RandomAccessFile(file, "rw")).foreach { f =>
+      f.setLength(writer.position)
+      f.close()
     }
   }
 
   def close() {
-    // force unmap -- illegal to access writer after this point (the JVM *will* segfault or you'll be accessing
-    // some other file recently mapped to the same memory space)
-    writer.asInstanceOf[sun.nio.ch.DirectBuffer].cleaner().clean()
     writer = null
+    memMappedFile.close()
   }
 }
 
@@ -126,21 +88,14 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit) extends SyncFileWrite
  * Open a file for writing, and fsync it on a schedule. The period may be 0 to force an fsync
  * after every write, or `Duration.MaxValue` to never fsync.
  */
-class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: Option[StorageUnit]) {
+class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit, truncate: Boolean)
+extends WritableFile {
   // pre-completed future for writers who are behaving synchronously.
   private final val DONE = Future(())
 
   case class TimestampedPromise(val promise: Promise[Unit], val time: Time)
 
-  val writer: SyncFileWriter = {
-    val someWriter =
-      maxFileSize map { size =>
-        new MMappedSyncFileWriter(file, size)
-      } orElse {
-        Some(new StreamSyncFileWriter(file))
-      }
-    someWriter.get
-  }
+  val writer = new MMappedSyncFileWriter(file, maxFileSize, truncate)
 
   val promises = new ConcurrentLinkedQueue[TimestampedPromise]()
   val periodicSyncTask = new PeriodicSyncTask(scheduler, period, period) {
@@ -182,7 +137,6 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
   }
 
   def write(buffer: ByteBuffer): Future[Unit] = {
-//println("writing to " + file + " @ " + writer.position)
     writer.write(buffer)
     if (period == 0.seconds) {
       try {
@@ -203,6 +157,10 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     }
   }
 
+  def flush() {
+    fsync()
+  }
+
   /**
    * No locking is done here. Be sure you aren't doing concurrent writes or they may be lost
    * forever, and nobody will cry.
@@ -211,17 +169,13 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     closed = true
     periodicSyncTask.stop()
     fsync()
-    writer.truncate(true)
-    writer.close
+    writer.truncate()
+    writer.close()
   }
 
   def position: Long = writer.position
 
   def position_=(p: Long) {
     writer.position(p)
-  }
-
-  def truncate() {
-    writer.truncate(false)
   }
 }
