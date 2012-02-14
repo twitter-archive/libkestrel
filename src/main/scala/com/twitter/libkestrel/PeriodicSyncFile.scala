@@ -37,9 +37,8 @@ extends Runnable {
 }
 
 object PeriodicSyncFile {
-  // FIXME
   // override me to track fsync delay metrics
-  val addTiming: Duration => Unit = { _ => }
+  var addTiming: Duration => Unit = { _ => }
 }
 
 /**
