@@ -355,6 +355,11 @@ class JournaledQueue(
     def waiterCount: Int = queue.waiterCount
 
     /**
+     * Number of items dropped because the queue was full.
+     */
+    def droppedCount: Int = queue.droppedCount.get
+
+    /**
      * FQDN for this reader, which is usually of the form "queue_name+reader_name", but will just
      * be "queue_name" for the default reader.
      */

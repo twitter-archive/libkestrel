@@ -148,6 +148,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   private[this] val triggerLock = new AtomicInteger(0)
 
   /**
+   * Count of items dropped because the queue was full.
+   */
+  val droppedCount = new AtomicInteger(0)
+
+  /**
    * Inserts the specified element into this queue if it is possible to do so immediately without
    * violating capacity restrictions, returning `true` upon success and `false` if no space is
    * currently available.
@@ -252,8 +257,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     if (fullPolicy == FullPolicy.DropOldest) {
       // make sure we aren't over the max queue size.
       while (elementCount.get > maxItems) {
-        // FIXME: increment counter about discarded?
-        // offer discarded item
+        droppedCount.getAndIncrement()
         queue.poll()
         elementCount.decrementAndGet()
       }
