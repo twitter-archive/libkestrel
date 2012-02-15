@@ -2,26 +2,19 @@ import sbt._
 import Process._
 import com.twitter.sbt._
 
-/**
- * Sbt project files are written in a DSL in scala.
- *
- * The % operator is just turning strings into maven dependency declarations, so lines like
- *     val example = "com.example" % "exampleland" % "1.0.3"
- * mean to add a dependency on exampleland version 1.0.3 from provider "com.example".
- */
-class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info) 
+class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   with NoisyDependencies
   with DefaultRepos
   with SubversionPublisher
   with PublishSourcesAndJavadocs
   with PublishSite
 {
-  val util_core = "com.twitter" % "util-core" % "1.12.3"
-  val util_logging = "com.twitter" % "util-logging" % "1.12.3"
+  val util_core = "com.twitter" % "util-core_2.9.1" % "1.12.13"
+  val util_logging = "com.twitter" % "util-logging_2.9.1" % "1.12.13"
 
   // for tests
-  val scalatest = "org.scalatest" % "scalatest_2.8.1" % "1.5.1" % "test"
-  val scopt = "com.github.scopt" %% "scopt" % "1.1.1" % "test"
+  val scalatest = "org.scalatest" % "scalatest_2.9.1" % "1.7.1" % "test"
+  val scopt = "com.github.scopt" %% "scopt" % "1.1.3" % "test"
 
   override def subversionRepository = Some("http://svn.local.twitter.com/maven")
 
