@@ -2,7 +2,7 @@ import sbt._
 import Process._
 import com.twitter.sbt._
 
-class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info) 
+class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   with NoisyDependencies
   with DefaultRepos
   with SubversionPublisher
