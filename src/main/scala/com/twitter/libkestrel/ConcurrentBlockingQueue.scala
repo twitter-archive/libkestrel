@@ -50,10 +50,29 @@ object ConcurrentBlockingQueue {
 }
 
 /**
- * A ConcurrentLinkedQueue backed by a queue of waiters. FIXME
+ * A lock-free blocking queue that supports timeouts.
+ *
+ * It works by having one `ConcurrentLinkedQueue` for the queue itself, and
+ * another one to track waiting consumers. Each time an item is put into the
+ * queue, it's handed off to the next waiting consumer, like an airport taxi
+ * line.
+ *
+ * The handoff occurs in a serialized block (like the `Serialized` trait in
+ * util-core), so when there's no contention, a new item is handed directly from
+ * the producer to the consumer. When there is contention, producers increment a
+ * counter representing how many pent-up handoffs there are, and the producer
+ * that got into the serialized block first will do each handoff in order until
+ * the count is zero again. This way, no producer is ever blocked.
+ *
+ * Consumers receive a future that will eventually be fulfilled either with
+ * `Some(item)` if an item arrived before the requested timeout, or `None` if the
+ * request timed out. If an item was available immediately, the future will be
+ * fulfilled before the consumer receives it. This way, no consumer is ever
+ * blocked.
  *
  * @param maxItems maximum allowed size of the queue (use `Long.MaxValue` for infinite size)
  * @param fullPolicy what to do when the queue is full and a `put` is attempted
+ * @param timer a Timer to use for triggering timeouts
  */
 final class ConcurrentBlockingQueue[A <: AnyRef](
   maxItems: Long,
@@ -127,6 +146,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * Sequential lock used to serialize access to handoffOne().
    */
   private[this] val triggerLock = new AtomicInteger(0)
+
+  /**
+   * Count of items dropped because the queue was full.
+   */
+  val droppedCount = new AtomicInteger(0)
 
   /**
    * Inserts the specified element into this queue if it is possible to do so immediately without
@@ -233,8 +257,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     if (fullPolicy == FullPolicy.DropOldest) {
       // make sure we aren't over the max queue size.
       while (elementCount.get > maxItems) {
-        // FIXME: increment counter about discarded?
-        // offer discarded item
+        droppedCount.getAndIncrement()
         queue.poll()
         elementCount.decrementAndGet()
       }

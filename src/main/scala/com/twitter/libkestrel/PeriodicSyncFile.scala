@@ -37,9 +37,8 @@ extends Runnable {
 }
 
 object PeriodicSyncFile {
-  // FIXME
   // override me to track fsync delay metrics
-  val addTiming: Duration => Unit = { _ => }
+  var addTiming: Duration => Unit = { _ => }
 }
 
 /**
@@ -63,33 +62,29 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
   @volatile var closed = false
 
   private def fsync() {
-    // FIXME wut
-    // "fsync needs to be synchronized since the timer thread could be running at the same time as a journal rotation."
-    synchronized {
-      // race: we could underestimate the number of completed writes. that's okay.
-      val completed = promises.size
-      val fsyncStart = Time.now
-      try {
-        writer.force(false)
-      } catch {
-        case e: IOException => {
-          for (i <- 0 until completed) {
-            promises.poll().promise.setException(e)
-          }
-          return
+    // race: we could underestimate the number of completed writes. that's okay.
+    val completed = promises.size
+    val fsyncStart = Time.now
+    try {
+      writer.force(false)
+    } catch {
+      case e: IOException => {
+        for (i <- 0 until completed) {
+          promises.poll().promise.setException(e)
         }
+        return
       }
-
-      for (i <- 0 until completed) {
-        val timestampedPromise = promises.poll()
-        timestampedPromise.promise.setValue(())
-        val delaySinceWrite = fsyncStart - timestampedPromise.time
-        val durationBehind = if (delaySinceWrite > period) delaySinceWrite - period else 0.seconds
-        PeriodicSyncFile.addTiming(durationBehind)
-      }
-
-      periodicSyncTask.stopIf { promises.isEmpty }
     }
+
+    for (i <- 0 until completed) {
+      val timestampedPromise = promises.poll()
+      timestampedPromise.promise.setValue(())
+      val delaySinceWrite = fsyncStart - timestampedPromise.time
+      val durationBehind = if (delaySinceWrite > period) delaySinceWrite - period else 0.seconds
+      PeriodicSyncFile.addTiming(durationBehind)
+    }
+
+    periodicSyncTask.stopIf { promises.isEmpty }
   }
 
   def write(buffer: ByteBuffer): Future[Unit] = {

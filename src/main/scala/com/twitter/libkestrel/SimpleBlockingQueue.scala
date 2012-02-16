@@ -18,6 +18,9 @@ object SimpleBlockingQueue {
 
 /**
  * Simple reproduction of the queue from kestrel 2.1.
+ *
+ * Puts and gets are done within synchronized blocks, and a DeadlineWaitQueue is used to arbitrate
+ * timeouts and handoffs.
  */
 final class SimpleBlockingQueue[A <: AnyRef](
   maxItems: Long,
