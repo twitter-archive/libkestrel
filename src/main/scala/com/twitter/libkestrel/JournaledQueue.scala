@@ -359,6 +359,11 @@ class JournaledQueue(
     def droppedCount: Int = queue.droppedCount.get
 
     /**
+     * Number of times this queue has been flushed.
+     */
+    val flushCount = new AtomicLong(0)
+
+    /**
      * FQDN for this reader, which is usually of the form "queue_name+reader_name", but will just
      * be "queue_name" for the default reader.
      */
@@ -634,6 +639,7 @@ class JournaledQueue(
         memoryItems = 0
         memoryBytes = 0
         age = 0.nanoseconds
+        flushCount.getAndIncrement()
       }
     }
 

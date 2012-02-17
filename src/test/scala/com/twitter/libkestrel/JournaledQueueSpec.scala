@@ -760,8 +760,10 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
           q.put(new Array[Byte](1024), Time.now, None)
         }
         assert(reader.items === 4)
+        assert(reader.flushCount.get === 0)
         reader.flush()
         assert(reader.items === 0)
+        assert(reader.flushCount.get === 1)
         assert(!reader.get(None)().isDefined)
         q.close()
       }
