@@ -651,7 +651,6 @@ class JournaledQueueSpec extends Spec with ShouldMatchers with TempFolder with T
         assert(new String(item.get.data) === "scoot over")
         assert(reader.putCount.get === 2)
         assert(reader.discardedCount.get === 1)
-        assert(reader.discarded === 1)
         q.close()
       }
 

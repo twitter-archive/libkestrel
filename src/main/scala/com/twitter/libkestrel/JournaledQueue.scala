@@ -319,7 +319,6 @@ class JournaledQueue(
     @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
-    @volatile var discarded = 0L
     @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
@@ -434,7 +433,6 @@ class JournaledQueue(
           itemOption foreach { item =>
             serialized {
               discardedCount.getAndIncrement()
-              discarded += 1
               commitItem(item)
               dropOldest()
             }
