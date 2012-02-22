@@ -62,7 +62,9 @@ class JournalFileReader(val file: File) extends RecordReader
     try {
       readMagic()
     } catch {
-      case e => close()
+      case e =>
+        close()
+        throw e
     }
   }
 
