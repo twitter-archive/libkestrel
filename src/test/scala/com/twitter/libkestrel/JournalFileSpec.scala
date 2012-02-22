@@ -56,7 +56,7 @@ object FileHelper {
   }
 }
 
-class JournalFileSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournalFileSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   import FileHelper._
 
   describe("JournalFile") {

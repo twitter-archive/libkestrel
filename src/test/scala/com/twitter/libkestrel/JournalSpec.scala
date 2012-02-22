@@ -24,7 +24,7 @@ import java.nio.ByteBuffer
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class JournalSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournalSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
     new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue, None)
 

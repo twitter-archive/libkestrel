@@ -16,9 +16,9 @@
 
 package com.twitter.libkestrel
 
-import org.scalatest.{Spec, BeforeAndAfterEach}
+import org.scalatest.{BeforeAndAfterEach, Suite}
 
-class ResourceCheckingSuite extends Spec with BeforeAndAfterEach {
+trait ResourceCheckingSuite extends Suite with BeforeAndAfterEach {
   override def afterEach() {
     if (!MemoryMappedFile.openFiles.isEmpty) {
       Console.err.println("MemoryMappedFile.openFiles is not empty:")

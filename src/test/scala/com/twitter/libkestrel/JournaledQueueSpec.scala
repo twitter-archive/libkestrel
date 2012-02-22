@@ -27,7 +27,7 @@ import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import config._
 
-class JournaledQueueSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 

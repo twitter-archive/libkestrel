@@ -24,7 +24,7 @@ import java.nio.ByteBuffer
 import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class BookmarkFileSpec extends ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class BookmarkFileSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   import FileHelper._
 
   describe("BookmarkFile") {
