@@ -34,6 +34,32 @@ trait Codec[A] {
   def decode(data: ByteBuffer): A
 }
 
+/**
+ * An optionally-journaled queue built on top of `ConcurrentBlockingQueue` that may have multiple
+ * "readers".
+ *
+ * When an item is added to a queue, it's journaled and passed on to any readers. There is always
+ * at least one reader, and the reader contains the actual in-memory queue. If there are multiple
+ * readers, they behave as multiple independent queues, each receiving a copy of each item added,
+ * but sharing a single journal. They may have different policies on memory use, queue size
+ * limits, and item expiration.
+ *
+ * Items are read only from readers. When an item is available, it's set aside as an "open read",
+ * but not committed to the journal. A separate call is made to either commit the item or abort
+ * it. Aborting an item returns it to the head of the queue to be given to the next consumer.
+ *
+ * Periodically each reader records its state in a separate checkpoint journal. When initialized,
+ * if a journal already exists for a queue and its readers, each reader restores itself from this
+ * saved state. If the queues were not shutdown cleanly, the state files may be out of date and
+ * items may be replayed. Care is taken never to let any of the journal files be corrupted or in a
+ * non-recoverable state. In case of error, the choice is always made to possibly replay items
+ * instead of losing them.
+ *
+ * @param config a set of configuration parameters for the queue
+ * @param path the folder to store journals in
+ * @param timer a Timer to use for triggering timeouts on reads
+ * @param scheduler a service to use for scheduling periodic disk syncs
+ */
 class JournaledQueue(
   val config: JournaledQueueConfig, path: File, timer: Timer, scheduler: ScheduledExecutorService
 ) extends Serialized {
@@ -296,7 +322,6 @@ class JournaledQueue(
     @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
-    @volatile var discarded = 0L
     @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
@@ -330,6 +355,16 @@ class JournaledQueue(
      * Number of consumers waiting for an item to arrive.
      */
     def waiterCount: Int = queue.waiterCount
+
+    /**
+     * Number of items dropped because the queue was full.
+     */
+    def droppedCount: Int = queue.droppedCount.get
+
+    /**
+     * Number of times this queue has been flushed.
+     */
+    val flushCount = new AtomicLong(0)
 
     /**
      * FQDN for this reader, which is usually of the form "queue_name+reader_name", but will just
@@ -406,7 +441,6 @@ class JournaledQueue(
           itemOption foreach { item =>
             serialized {
               discardedCount.getAndIncrement()
-              discarded += 1
               commitItem(item)
               dropOldest()
             }
@@ -611,6 +645,7 @@ class JournaledQueue(
         memoryItems = 0
         memoryBytes = 0
         age = 0.nanoseconds
+        flushCount.getAndIncrement()
       }
     }
 

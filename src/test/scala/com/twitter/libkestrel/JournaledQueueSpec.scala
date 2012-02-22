@@ -685,7 +685,6 @@ class JournaledQueueSpec extends ResourceCheckingSuite with ShouldMatchers with 
         assert(bufferToString(item.get.data) === "scoot over")
         assert(reader.putCount.get === 2)
         assert(reader.discardedCount.get === 1)
-        assert(reader.discarded === 1)
         q.close()
       }
 
@@ -795,8 +794,10 @@ class JournaledQueueSpec extends ResourceCheckingSuite with ShouldMatchers with 
           q.put(ByteBuffer.allocate(1024), Time.now, None)
         }
         assert(reader.items === 4)
+        assert(reader.flushCount.get === 0)
         reader.flush()
         assert(reader.items === 0)
+        assert(reader.flushCount.get === 1)
         assert(!reader.get(None)().isDefined)
         q.close()
       }
