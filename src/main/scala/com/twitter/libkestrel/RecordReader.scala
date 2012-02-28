@@ -105,7 +105,7 @@ abstract class RecordReader extends Iterable[Record] {
       }
       case _ => {
         // this is okay. we can skip the ones we don't know.
-        reader.position(reader.position + dataSize)
+        reader.position(lastPosition + headerSize * 4 + dataSize + 1)
         Record.Unknown(command)
       }
     })

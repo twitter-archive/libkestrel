@@ -106,7 +106,7 @@ class BookmarkFileSpec extends Spec with ResourceCheckingSuite with ShouldMatche
     }
 
     it("be okay with commands it doesn't know") {
-      val fileData = "26 3c 26 3 f1 4 0 0 0 ff ff ff ff 2 0 40 0 0 0 0 0 0"
+      val fileData = "26 3c 26 3 f3 4 0 0 0 1 1 1 1 2 2 2 2 ff ff ff ff 2 0 40 0 0 0 0 0 0"
       val testFile = new File(testFolder, "a1")
       writeFile(testFile, unhex(fileData))
 

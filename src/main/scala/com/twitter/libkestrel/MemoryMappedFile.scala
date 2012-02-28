@@ -60,8 +60,11 @@ object MemoryMappedFile {
       val weakRef = mappedFiles get(canonicalPath) flatMap { _.get }
       weakRef match {
         case Some(mappedFile) =>
-          if (readOnly) new ReadOnlyMemoryMappedFileView(mappedFile)
-          else throw new IOException("multiple writers on " + file)
+          if (readOnly) {
+            new ReadOnlyMemoryMappedFileView(mappedFile)
+          } else {
+            throw new IOException("multiple writers on " + file)
+          }
         case None =>
           val mappedFile = new WritableMemoryMappedFile(canonicalFile, size, truncate)
           mappedFiles(canonicalPath) = new WeakReference(mappedFile)
@@ -108,12 +111,12 @@ trait MemoryMappedFile {
       if (truncate) channel.truncate(0)
       channel.map(mode, 0, size.inBytes)
     } finally {
-      channel.close
+      channel.close()
     }
   }
 
   protected override def finalize() {
-    if (_buffer != null) {
+    if (_buffer ne null) {
       close()
     }
   }
@@ -130,7 +133,7 @@ class WritableMemoryMappedFile(val file: File, val size: StorageUnit, truncate: 
 
   def close() {
     mappedFiles.synchronized {
-      if (removeReference) {
+      if (removeReference()) {
         mappedFiles.remove(file.getPath)
       }
     }
@@ -141,7 +144,7 @@ class WritableMemoryMappedFile(val file: File, val size: StorageUnit, truncate: 
   }
 
   def removeReference(): Boolean = {
-    if (_buffer == null) {
+    if (_buffer eq null) {
       throw new IOException("already closed")
     }
 
@@ -152,7 +155,6 @@ class WritableMemoryMappedFile(val file: File, val size: StorageUnit, truncate: 
       false
     }
   }
-
 }
 
 trait MemoryMappedFileView extends MemoryMappedFile {
@@ -162,7 +164,7 @@ trait MemoryMappedFileView extends MemoryMappedFile {
   def size = underlyingMap.size
 
   def close() {
-    if (_buffer == null) throw new IOException("already closed")
+    if (_buffer eq null) throw new IOException("already closed")
 
     _buffer = null
     underlyingMap.close()

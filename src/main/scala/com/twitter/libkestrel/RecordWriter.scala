@@ -65,7 +65,7 @@ abstract class RecordWriter {
     if (item.dataSize > LARGEST_DATA.inBytes) {
       throw new IOException("item too large")
     }
-    val b = buffer(item.dataSize + (8 * 4) + 1)
+    val b = buffer(storageSizeOf(item))
     val size = if (item.expireTime.isDefined) 8 else 6
     b.put((PUT << 4 | size).toByte)
     b.putInt(item.dataSize)

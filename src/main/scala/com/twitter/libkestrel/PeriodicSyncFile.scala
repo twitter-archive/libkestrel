@@ -71,10 +71,9 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit, truncate: Boolean) {
   }
 
   def truncate() {
-    Some(new RandomAccessFile(file, "rw")).foreach { f =>
-      f.setLength(writer.position)
-      f.close()
-    }
+    val f = new RandomAccessFile(file, "rw")
+    f.setLength(writer.position)
+    f.close()
   }
 
   def close() {

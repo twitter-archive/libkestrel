@@ -26,7 +26,7 @@ object BookmarkFile {
     val reader = new BookmarkFileReader(file)
     if (reader.open() != HEADER_BOOKMARK) {
       reader.close()
-      throw new IOException("Not a bookmark file")
+      throw new IOException("Not a bookmark file: " + file)
     }
     reader
   }
@@ -43,7 +43,7 @@ class BookmarkFileReader(val file: File) extends RecordReader {
 
   def open(): Int = {
     val channel = new FileInputStream(file).getChannel
-    if (channel.size > Int.MaxValue.toLong) throw new IOException("Bookmark file too large")
+    if (channel.size > Int.MaxValue.toLong) throw new IOException("Bookmark file too large: " + file)
 
     reader = ByteBuffer.allocate(channel.size.toInt)
     channel.read(reader)
