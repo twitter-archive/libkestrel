@@ -63,6 +63,9 @@ class MMappedSyncFileWriter(file: File, size: StorageUnit, truncate: Boolean) {
   def position(p: Long) { writer.position(p.toInt) }
 
   def write(buffer: ByteBuffer) {
+    // Write the first byte last so that readers using the same memory mapped
+    // file will not see a non-zero first byte until the remainder of the
+    // buffer has been written.
     val startPos = writer.position
     writer.put(0.toByte)
     val startByte = buffer.get
