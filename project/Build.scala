@@ -6,7 +6,7 @@ object Libkestrel extends Build {
   val utilVersion = "1.12.13"
 
   lazy val root = Project(
-    id = "kestrel",
+    id = "libkestrel",
     base = file("."),
     settings =
       Project.defaultSettings ++
