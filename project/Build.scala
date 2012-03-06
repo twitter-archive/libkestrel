@@ -8,30 +8,29 @@ object Libkestrel extends Build {
   lazy val root = Project(
     id = "libkestrel",
     base = file("."),
-    settings =
-      Project.defaultSettings ++
+    settings = Project.defaultSettings ++
       StandardProject.newSettings ++
-      SubversionPublisher.newSettings ++ Seq(
-        name := "libkestrel",
-        organization := "com.twitter",
-        version := "1.0.0-SNAPSHOT",
-        scalaVersion := "2.9.1",
+      SubversionPublisher.newSettings
+  ).settings(
+    name := "libkestrel",
+    organization := "com.twitter",
+    version := "1.0.0-SNAPSHOT",
+    scalaVersion := "2.9.1",
 
-        // time-based tests cannot be run in parallel
-        logBuffered in Test := false,
-        parallelExecution in Test := false,
+    // time-based tests cannot be run in parallel
+    logBuffered in Test := false,
+    parallelExecution in Test := false,
 
-        libraryDependencies ++= Seq(
-          "com.twitter" %% "util-core" % utilVersion,
-          "com.twitter" %% "util-logging" % utilVersion,
+    libraryDependencies ++= Seq(
+      "com.twitter" %% "util-core" % utilVersion,
+      "com.twitter" %% "util-logging" % utilVersion,
 
-          // for tests only:
-          "org.scalatest" %% "scalatest" % "1.7.1" % "test",
-          "com.github.scopt" %% "scopt" % "1.1.3" % "test"
-        ),
+      // for tests only:
+      "org.scalatest" %% "scalatest" % "1.7.1" % "test",
+      "com.github.scopt" %% "scopt" % "1.1.3" % "test"
+    ),
 
-        SubversionPublisher.subversionRepository := Some("https://svn.twitter.biz/maven-public"),
-        publishArtifact in Test := true
-      )
+    SubversionPublisher.subversionRepository := Some("https://svn.twitter.biz/maven-public"),
+    publishArtifact in Test := true
   )
 }
