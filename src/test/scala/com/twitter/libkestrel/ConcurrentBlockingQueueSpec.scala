@@ -22,7 +22,7 @@ import org.scalatest.{AbstractSuite, Spec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import scala.collection.mutable
 
-class ConcurrentBlockingQueueSpec extends Spec with ShouldMatchers with TempFolder with TestLogging {
+class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   implicit var timer: MockTimer = null
 
   trait QueueBuilder {

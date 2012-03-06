@@ -17,26 +17,31 @@
 package com.twitter.libkestrel
 
 import com.twitter.util.Time
+import java.nio.ByteBuffer
 
 case class QueueItem(
   id: Long,
   addTime: Time,
   expireTime: Option[Time],
-  data: Array[Byte],
+  data: ByteBuffer,
   errorCount: Int = 0
 ) {
+  val dataSize = data.remaining
+
   override def equals(other: Any) = {
     other match {
       case x: QueueItem => {
         (x eq this) ||
-          (x.id == id && x.addTime == addTime && x.expireTime == expireTime && x.data.toList == data.toList)
+          (x.id == id && x.addTime == addTime && x.expireTime == expireTime &&
+           x.data.duplicate.rewind == data.duplicate.rewind)
       }
       case _ => false
     }
   }
 
   override def toString = {
-    val hex = data.slice(0, data.size min 64).map { b => "%x".format(b) }.mkString(" ")
+    val limit = data.limit min (data.position + 64)
+    val hex = (data.position until limit).map { i => "%x".format(data.get(i)) }.mkString(" ")
     "QueueItem(id=%d, addTime=%s, expireTime=%s, data=%s, errors=%s)".format(
       id, addTime.inNanoseconds, expireTime.map { _.inNanoseconds }, hex, errorCount
     )

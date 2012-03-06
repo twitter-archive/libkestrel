@@ -37,23 +37,23 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
 
   def apply() {
     try {
-      val journalFile = if (reader) {
-        JournalFile.openReader(new File(filename), null, Duration.MaxValue)
+      val file: RecordReader = if (reader) {
+        BookmarkFile.open(new File(filename))
       } else {
-        JournalFile.openWriter(new File(filename), null, Duration.MaxValue)
+        JournalFile.open(new File(filename))
       }
       var lastDisplay = 0L
 
-      var position = journalFile.position
-      journalFile.foreach { record =>
+      var position = file.position
+      file.foreach { record =>
         operations += 1
         dumpItem(position, record)
-        if (quiet && !dumpRaw && journalFile.position - lastDisplay > 1024 * 1024) {
-          print("\rReading journal: %-6s".format(journalFile.position.bytes.toHuman))
+        if (quiet && !dumpRaw && file.position - lastDisplay > 1024 * 1024) {
+          print("\rReading journal: %-6s".format(file.position.bytes.toHuman))
           Console.flush()
-          lastDisplay = journalFile.position
+          lastDisplay = file.position
         }
-        position = journalFile.position
+        position = file.position
       }
       if (!dumpRaw) {
         print("\r" + (" " * 30) + "\r")
@@ -61,7 +61,7 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
 
       if (!dumpRaw) {
         println()
-        println("Journal size: %d operations, %d bytes.".format(operations, journalFile.position))
+        println("Journal size: %d operations, %d bytes.".format(operations, file.position))
         if (firstId > 0) println("Ids %d - %d.".format(firstId, lastId))
       }
     } catch {
@@ -73,15 +73,15 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
     }
   }
 
-  def dumpItem(position: Long, record: JournalFile.Record) {
+  def dumpItem(position: Long, record: Record) {
     val now = Time.now
     verbose("%08x  ", position & 0xffffffffL)
     record match {
-      case JournalFile.Record.Put(item) =>
+      case Record.Put(item) =>
         if (firstId == 0) firstId = item.id
         lastId = item.id
         if (!quiet) {
-          verbose("PUT %-6d id=%d", item.data.size, item.id)
+          verbose("PUT %-6d id=%d", item.dataSize, item.id)
           if (item.expireTime.isDefined) {
             if (item.expireTime.get - now < 0.milliseconds) {
               verbose(" expired")
@@ -92,14 +92,16 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
           if (item.errorCount > 0) verbose(" errors=%d", item.errorCount)
           verbose("\n")
         }
+        val data = new Array[Byte](item.dataSize)
+        item.data.get(data)
         if (dump) {
-          println("    " + new String(item.data, "ISO-8859-1"))
+          println("    " + new String(data, "ISO-8859-1"))
         } else if (dumpRaw) {
-          print(new String(item.data, "ISO-8859-1"))
+          print(new String(data, "ISO-8859-1"))
         }
-      case JournalFile.Record.ReadHead(id) =>
+      case Record.ReadHead(id) =>
         verbose("HEAD %d\n", id)
-      case JournalFile.Record.ReadDone(ids) =>
+      case Record.ReadDone(ids) =>
         verbose("DONE %s\n", ids.sorted.mkString("(", ", ", ")"))
       case x =>
         verbose(x.toString)

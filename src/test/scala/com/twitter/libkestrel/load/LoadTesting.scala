@@ -20,6 +20,7 @@ package load
 import com.twitter.logging.{ConsoleHandler, FileHandler, Formatter, Logger, Policy}
 import com.twitter.util.{JavaTimer, Timer}
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import scopt.OptionParser
 import config._
@@ -28,8 +29,12 @@ trait LoadTesting {
   implicit val javaTimer: Timer = new JavaTimer()
   val scheduler = new ScheduledThreadPoolExecutor(1)
   implicit val stringCodec: Codec[String] = new Codec[String] {
-    def encode(item: String) = item.getBytes
-    def decode(data: Array[Byte]) = new String(data)
+    def encode(item: String) = ByteBuffer.wrap(item.getBytes)
+    def decode(data: ByteBuffer) = {
+      val bytes = new Array[Byte](data.remaining)
+      data.get(bytes)
+      new String(bytes)
+    }
   }
 
   sealed trait QueueType

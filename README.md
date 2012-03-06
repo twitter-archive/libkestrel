@@ -60,13 +60,13 @@ policies on memory use, queue size limits, and item expiration.
 
 ### Gets
 
-Items are read only from readers. When an item is fetched, it's set aside as
+Items are read only from readers. When an item is available, it's set aside as
 an "open read", but not committed to the journal. A separate call is made to
 either commit the item or abort it. Aborting an item returns it to the head of
 the queue to be given to the next consumer.
 
 Periodically each reader records its state in a separate checkpoint journal.
-On startup, if a journal already exists for a queue and its readers, each
+When initialized, if a journal already exists for a queue and its readers, each
 reader restores itself from this saved state. If the queues were not shutdown
 cleanly, the state files may be out of date and items may be replayed. Care is
 taken never to let any of the journal files be corrupted or in a

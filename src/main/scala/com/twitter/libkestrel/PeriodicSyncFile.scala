@@ -1,10 +1,12 @@
 package com.twitter.libkestrel
 
-import java.nio.ByteBuffer
-import java.util.concurrent.{ConcurrentLinkedQueue, ScheduledExecutorService, ScheduledFuture, TimeUnit}
+import com.twitter.conversions.storage._
 import com.twitter.conversions.time._
 import com.twitter.util._
-import java.io.{IOException, FileOutputStream, File}
+import java.io.{IOException, File, FileOutputStream, RandomAccessFile}
+import java.nio.channels.FileChannel
+import java.nio.ByteBuffer
+import java.util.concurrent.{ConcurrentLinkedQueue, ScheduledExecutorService, ScheduledFuture, TimeUnit}
 
 abstract class PeriodicSyncTask(val scheduler: ScheduledExecutorService, initialDelay: Duration, period: Duration)
 extends Runnable {
@@ -37,22 +39,65 @@ extends Runnable {
 }
 
 object PeriodicSyncFile {
-  // FIXME
+  def create(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit) = {
+    new PeriodicSyncFile(file, scheduler, period, maxFileSize, true)
+  }
+
+  def append(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit) = {
+    new PeriodicSyncFile(file, scheduler, period, maxFileSize, false)
+  }
+
   // override me to track fsync delay metrics
-  val addTiming: Duration => Unit = { _ => }
+  var addTiming: Duration => Unit = { _ => }
+}
+
+class MMappedSyncFileWriter(file: File, size: StorageUnit, truncate: Boolean) {
+  private[this] val memMappedFile = MemoryMappedFile.map(file, size, truncate)
+  var writer = memMappedFile.buffer()
+
+  def force() { memMappedFile.force() }
+
+  def position = writer.position.toLong
+
+  // overflow -> IllegalArgumentException
+  def position(p: Long) { writer.position(p.toInt) }
+
+  def write(buffer: ByteBuffer) {
+    // Write the first byte last so that readers using the same memory mapped
+    // file will not see a non-zero first byte until the remainder of the
+    // buffer has been written.
+    val startPos = writer.position
+    writer.put(0.toByte)
+    val startByte = buffer.get
+    writer.put(buffer)
+    writer.put(startPos, startByte)
+  }
+
+  def truncate() {
+    val f = new RandomAccessFile(file, "rw")
+    f.setLength(writer.position)
+    f.close()
+  }
+
+  def close() {
+    writer = null
+    memMappedFile.close()
+  }
 }
 
 /**
  * Open a file for writing, and fsync it on a schedule. The period may be 0 to force an fsync
  * after every write, or `Duration.MaxValue` to never fsync.
  */
-class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: Duration) {
+class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: Duration, maxFileSize: StorageUnit, truncate: Boolean)
+extends WritableFile {
   // pre-completed future for writers who are behaving synchronously.
   private final val DONE = Future(())
 
   case class TimestampedPromise(val promise: Promise[Unit], val time: Time)
 
-  val writer = new FileOutputStream(file, true).getChannel
+  val writer = new MMappedSyncFileWriter(file, maxFileSize, truncate)
+
   val promises = new ConcurrentLinkedQueue[TimestampedPromise]()
   val periodicSyncTask = new PeriodicSyncTask(scheduler, period, period) {
     override def run() {
@@ -63,42 +108,36 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
   @volatile var closed = false
 
   private def fsync() {
-    // FIXME wut
-    // "fsync needs to be synchronized since the timer thread could be running at the same time as a journal rotation."
-    synchronized {
-      // race: we could underestimate the number of completed writes. that's okay.
-      val completed = promises.size
-      val fsyncStart = Time.now
-      try {
-        writer.force(false)
-      } catch {
-        case e: IOException => {
-          for (i <- 0 until completed) {
-            promises.poll().promise.setException(e)
-          }
-          return
+    // race: we could underestimate the number of completed writes. that's okay.
+    val completed = promises.size
+    val fsyncStart = Time.now
+    try {
+      writer.force()
+    } catch {
+      case e: IOException => {
+        for (i <- 0 until completed) {
+          promises.poll().promise.setException(e)
         }
+        return
       }
-
-      for (i <- 0 until completed) {
-        val timestampedPromise = promises.poll()
-        timestampedPromise.promise.setValue(())
-        val delaySinceWrite = fsyncStart - timestampedPromise.time
-        val durationBehind = if (delaySinceWrite > period) delaySinceWrite - period else 0.seconds
-        PeriodicSyncFile.addTiming(durationBehind)
-      }
-
-      periodicSyncTask.stopIf { promises.isEmpty }
     }
+
+    for (i <- 0 until completed) {
+      val timestampedPromise = promises.poll()
+      timestampedPromise.promise.setValue(())
+      val delaySinceWrite = fsyncStart - timestampedPromise.time
+      val durationBehind = if (delaySinceWrite > period) delaySinceWrite - period else 0.seconds
+      PeriodicSyncFile.addTiming(durationBehind)
+    }
+
+    periodicSyncTask.stopIf { promises.isEmpty }
   }
 
   def write(buffer: ByteBuffer): Future[Unit] = {
-    do {
-      writer.write(buffer)
-    } while (buffer.position < buffer.limit)
+    writer.write(buffer)
     if (period == 0.seconds) {
       try {
-        writer.force(false)
+        writer.force()
         DONE
       } catch {
         case e: IOException =>
@@ -115,6 +154,10 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     }
   }
 
+  def flush() {
+    fsync()
+  }
+
   /**
    * No locking is done here. Be sure you aren't doing concurrent writes or they may be lost
    * forever, and nobody will cry.
@@ -123,16 +166,13 @@ class PeriodicSyncFile(file: File, scheduler: ScheduledExecutorService, period: 
     closed = true
     periodicSyncTask.stop()
     fsync()
+    writer.truncate()
     writer.close()
   }
 
-  def position: Long = writer.position()
+  def position: Long = writer.position
 
   def position_=(p: Long) {
     writer.position(p)
-  }
-
-  def truncate() {
-    writer.truncate(position)
   }
 }

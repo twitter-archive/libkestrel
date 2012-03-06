@@ -31,6 +31,7 @@ object FloodTest extends LoadTesting {
   var testTime = 10.seconds
   var pollPercent = 25
   var maxItems = 10000
+  var minBytes = 0
   var validate = false
 
   val parser = new CommonOptionParser("qtest flood") {
@@ -49,6 +50,9 @@ object FloodTest extends LoadTesting {
     })
     opt("x", "target", "<items>", "slow down the writer threads a bit when the queue reaches this size (default: %d)".format(maxItems), { x: String =>
       maxItems = x.toInt
+    })
+    opt("b", "bytes", "<bytes>", "size in bytes of payload (default: %d == variable, just big enough for validation)".format(minBytes), { x: String =>
+      minBytes = x.toInt
     })
     opt("V", "validate", "validate items afterwards (makes it much slower)", { validate = true; () })
   }
@@ -70,12 +74,18 @@ object FloodTest extends LoadTesting {
     val writerDone = new AtomicIntegerArray(writerThreadCount)
     val deadline = testTime.fromNow
 
+    val messageFormat = minBytes match {
+      case b if b <= 3 =>  "%d/%d"
+      case b if b <= 15 => "%d/%0" + (b - 2) + "d"
+      case b =>            val spaces = ("%-" + (b - 15) + "s").format(" "); "%d/%010d/[" + spaces + "]"
+    }
+
     val writers = (0 until writerThreadCount).map { threadId =>
       new Thread() {
         override def run() {
           var id = 0
           while (deadline > Time.now) {
-            queue.put(threadId + "/" + id)
+            queue.put(messageFormat.format(threadId, id))
             id += 1
             if (queue.size > maxItems) Thread.sleep(5)
           }
@@ -115,7 +125,7 @@ object FloodTest extends LoadTesting {
             if (item.isDefined) count += 1
             if (validate) {
               item.map { x =>
-                x.split("/").map { _.toInt }.toList match {
+                x.split("/").slice(0, 2).map { _.toInt }.toList match {
                   case List(tid, id) =>
                     received(tid).putIfAbsent(id, new AtomicInteger)
                     received(tid).get(id).incrementAndGet()

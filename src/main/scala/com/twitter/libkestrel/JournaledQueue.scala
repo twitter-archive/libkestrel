@@ -22,6 +22,7 @@ import com.twitter.conversions.time._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.{ConcurrentHashMap, ScheduledExecutorService}
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.immutable
@@ -29,10 +30,36 @@ import scala.collection.JavaConverters._
 import config._
 
 trait Codec[A] {
-  def encode(item: A): Array[Byte]
-  def decode(data: Array[Byte]): A
+  def encode(item: A): ByteBuffer
+  def decode(data: ByteBuffer): A
 }
 
+/**
+ * An optionally-journaled queue built on top of `ConcurrentBlockingQueue` that may have multiple
+ * "readers".
+ *
+ * When an item is added to a queue, it's journaled and passed on to any readers. There is always
+ * at least one reader, and the reader contains the actual in-memory queue. If there are multiple
+ * readers, they behave as multiple independent queues, each receiving a copy of each item added,
+ * but sharing a single journal. They may have different policies on memory use, queue size
+ * limits, and item expiration.
+ *
+ * Items are read only from readers. When an item is available, it's set aside as an "open read",
+ * but not committed to the journal. A separate call is made to either commit the item or abort
+ * it. Aborting an item returns it to the head of the queue to be given to the next consumer.
+ *
+ * Periodically each reader records its state in a separate checkpoint journal. When initialized,
+ * if a journal already exists for a queue and its readers, each reader restores itself from this
+ * saved state. If the queues were not shutdown cleanly, the state files may be out of date and
+ * items may be replayed. Care is taken never to let any of the journal files be corrupted or in a
+ * non-recoverable state. In case of error, the choice is always made to possibly replay items
+ * instead of losing them.
+ *
+ * @param config a set of configuration parameters for the queue
+ * @param path the folder to store journals in
+ * @param timer a Timer to use for triggering timeouts on reads
+ * @param scheduler a service to use for scheduling periodic disk syncs
+ */
 class JournaledQueue(
   val config: JournaledQueueConfig, path: File, timer: Timer, scheduler: ScheduledExecutorService
 ) extends Serialized {
@@ -143,13 +170,15 @@ class JournaledQueue(
   def close() {
     closed = true
     readerMap.values.foreach { _.close() }
+    journal.foreach { _.close() }
   }
 
   /**
    * Close this queue and also erase any journal files.
    */
   def erase() {
-    close()
+    closed = true
+    readerMap.values.foreach { _.close() }
     journal.foreach { _.erase() }
   }
 
@@ -173,11 +202,11 @@ class JournaledQueue(
    * written to disk.
    */
   def put(
-    data: Array[Byte], addTime: Time, expireTime: Option[Time] = None, errorCount: Int = 0
+    data: ByteBuffer, addTime: Time, expireTime: Option[Time] = None, errorCount: Int = 0
   ): Option[Future[Unit]] = {
     if (closed) return None
-    if (data.size > config.maxItemSize.inBytes) {
-      log.debug("Rejecting put to %s: item too large (%s).", config.name, data.size.bytes.toHuman)
+    if (data.remaining > config.maxItemSize.inBytes) {
+      log.debug("Rejecting put to %s: item too large (%s).", config.name, data.remaining.bytes.toHuman)
       return None
     }
     // if any reader is rejecting puts, the put is rejected.
@@ -293,7 +322,6 @@ class JournaledQueue(
     @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
     @volatile var age = 0.nanoseconds
-    @volatile var discarded = 0L
     @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
@@ -306,7 +334,7 @@ class JournaledQueue(
     /**
      * Byte count of open (uncommitted) reads.
      */
-    def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.data.size }
+    def openBytes = openReads.values.asScala.foldLeft(0L) { _ + _.dataSize }
 
     /**
      * Total number of items ever added to this queue.
@@ -327,6 +355,16 @@ class JournaledQueue(
      * Number of consumers waiting for an item to arrive.
      */
     def waiterCount: Int = queue.waiterCount
+
+    /**
+     * Number of items dropped because the queue was full.
+     */
+    def droppedCount: Int = queue.droppedCount.get
+
+    /**
+     * Number of times this queue has been flushed.
+     */
+    val flushCount = new AtomicLong(0)
 
     /**
      * FQDN for this reader, which is usually of the form "queue_name+reader_name", but will just
@@ -360,10 +398,10 @@ class JournaledQueue(
         if (!inReadBehind) {
           queue.put(item)
           memoryItems += 1
-          memoryBytes += item.data.size
+          memoryBytes += item.dataSize
         }
         items += 1
-        bytes += item.data.size
+        bytes += item.dataSize
         if (bytes >= readerConfig.maxMemorySize.inBytes && !inReadBehind) {
           j.startReadBehind(item.id)
           inReadBehind = true
@@ -403,7 +441,6 @@ class JournaledQueue(
           itemOption foreach { item =>
             serialized {
               discardedCount.getAndIncrement()
-              discarded += 1
               commitItem(item)
               dropOldest()
             }
@@ -431,12 +468,12 @@ class JournaledQueue(
         }.getOrElse(false)
 
         if (!inReadBehind) {
-          queue.put(item)
+          queue.put(item.copy(data = item.data.duplicate()))
           memoryItems += 1
-          memoryBytes += item.data.size
+          memoryBytes += item.dataSize
         }
         items += 1
-        bytes += item.data.size
+        bytes += item.dataSize
         putCount.getAndIncrement()
 
         // we've already checked canPut by here, but we may still drop the oldest item(s).
@@ -467,9 +504,9 @@ class JournaledQueue(
           expiredCount.getAndIncrement()
           serialized {
             items -= 1
-            bytes -= item.data.size
+            bytes -= item.dataSize
             memoryItems -= 1
-            memoryBytes -= item.data.size
+            memoryBytes -= item.dataSize
             expired += 1
             journalReader.foreach { _.commit(item.id) }
             fillReadBehind()
@@ -491,7 +528,7 @@ class JournaledQueue(
             j.nextReadBehind().foreach { item =>
               queue.put(item)
               memoryItems += 1
-              memoryBytes += item.data.size
+              memoryBytes += item.dataSize
             }
           }
         }
@@ -527,10 +564,12 @@ class JournaledQueue(
               age = Time.now - item.addTime
               if (peeking) {
                 queue.putHead(item)
+                Future.value(Some(item.copy(data = item.data.duplicate())))
               } else {
                 openReads.put(item.id, item)
+                item.data.mark()
+                Future.value(s)
               }
-              Future.value(s)
             }
           }
         }
@@ -558,9 +597,9 @@ class JournaledQueue(
     private[this] def commitItem(item: QueueItem) {
       journalReader.foreach { _.commit(item.id) }
       items -= 1
-      bytes -= item.data.size
+      bytes -= item.dataSize
       memoryItems -= 1
-      memoryBytes -= item.data.size
+      memoryBytes -= item.dataSize
       if (items == 0) age = 0.milliseconds
       fillReadBehind()
     }
@@ -575,6 +614,7 @@ class JournaledQueue(
         log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
         return
       }
+      item.data.reset()
       val newItem = item.copy(errorCount = item.errorCount + 1)
       if (readerConfig.errorHandler(newItem)) {
         commitItem(newItem)
@@ -605,6 +645,7 @@ class JournaledQueue(
         memoryItems = 0
         memoryBytes = 0
         age = 0.nanoseconds
+        flushCount.getAndIncrement()
       }
     }
 
