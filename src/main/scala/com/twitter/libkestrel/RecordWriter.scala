@@ -24,6 +24,7 @@ abstract class RecordWriter {
   import Record._
 
   def file: File
+
   protected def writer: WritableFile
 
   private[this] val BUFFER_SIZE = 128
@@ -100,6 +101,7 @@ abstract class RecordWriter {
   }
 
   def position = writer.position
+
   def close() {
     writer.flush()
     writer.close()
