@@ -827,11 +827,12 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
         assert(! reader.isReadyForExpiration)
 
         q.put(stringToBuffer("hi"), Time.now, None)
-        timeMutator.advance(5.seconds)
+        timeMutator.advance(6.seconds)
         assert(! reader.isReadyForExpiration)
 
         assert(reader.get(None)().isDefined)
         assert(reader.isReadyForExpiration)
+        q.close()
       }
     }
   }
