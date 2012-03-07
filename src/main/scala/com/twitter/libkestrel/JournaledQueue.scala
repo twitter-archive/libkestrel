@@ -327,6 +327,11 @@ class JournaledQueue(
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
 
     /**
+     * When was this reader created?
+     */
+    val createTime = Time.now
+
+    /**
      * Number of open (uncommitted) reads.
      */
     def openItems = openReads.values.size
@@ -655,6 +660,16 @@ class JournaledQueue(
           case _ => j.close()
         }
       }
+    }
+
+    /**
+     * Check if this Queue is eligible for expiration by way of it being empty
+     * and its age being greater than or equal to maxQueueAge
+     */
+    def isReadyForExpiration: Boolean = {
+      readerConfig.maxQueueAge.map { age =>
+        Time.now > createTime + age && queue.size == 0
+      }.getOrElse(false)
     }
 
     def toDebug: String = {
