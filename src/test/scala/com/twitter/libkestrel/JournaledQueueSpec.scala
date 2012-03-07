@@ -818,5 +818,21 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
         q.close()
       }
     }
+
+    it("expires an empty queue") {
+      Time.withCurrentTimeFrozen { timeMutator =>
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(maxQueueAge = Some(5.seconds)))
+        val reader = q.reader("")
+
+        assert(! reader.isReadyForExpiration)
+
+        q.put(stringToBuffer("hi"), Time.now, None)
+        timeMutator.advance(5.seconds)
+        assert(! reader.isReadyForExpiration)
+
+        assert(reader.get(None)().isDefined)
+        assert(reader.isReadyForExpiration)
+      }
+    }
   }
 }
