@@ -9,14 +9,23 @@ class LibkestrelProject(info: ProjectInfo) extends StandardServiceProject(info)
   with PublishSourcesAndJavadocs
   with PublishSite
 {
-  val util_core = "com.twitter" % "util-core_2.9.1" % "1.12.13"
-  val util_logging = "com.twitter" % "util-logging_2.9.1" % "1.12.13"
+  val util_core = buildScalaVersion match {
+    case "2.8.1" => "com.twitter" % "util-core" % "1.12.13"
+    case "2.9.1" => "com.twitter" % "util-core_2.9.1" % "1.12.13"
+  }
+  val util_logging = buildScalaVersion match {
+    case "2.8.1" => "com.twitter" % "util-logging" % "1.12.13"
+    case "2.9.1" => "com.twitter" % "util-logging_2.9.1" % "1.12.13"
+  }
 
   // for tests
-  val scalatest = "org.scalatest" % "scalatest_2.9.1" % "1.7.1" % "test"
+  val scalatest = "org.scalatest" %% "scalatest" % "1.7.1" % "test"
   val scopt = "com.github.scopt" %% "scopt" % "1.1.3" % "test"
 
-  override def subversionRepository = Some("http://svn.local.twitter.com/maven")
+  // use "<package>_<scalaversion>" as the published name:
+  override def disableCrossPaths = false
+
+  override def subversionRepository = Some("https://svn.twitter.biz/maven")
 
   // generate a jar that can be run for load tests.
   def loadTestJarFilename = "libkestrel-tests-" + version.toString + ".jar"
