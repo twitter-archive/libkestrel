@@ -19,6 +19,13 @@ kestrel use this library in its next major release.
     $ sbt clean update package-dist
 
 
+## Community
+
+Come talk to us on the kestrel mailing list!
+
+http://groups.google.com/group/kestrel-talk
+
+
 ## ConcurrentBlockingQueue
 
 ConcurrentBlockingQueue extends the idea of java's `ConcurrentLinkedQueue` to
