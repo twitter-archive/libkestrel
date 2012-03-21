@@ -29,11 +29,6 @@ import scala.collection.immutable
 import scala.collection.JavaConverters._
 import config._
 
-trait Codec[A] {
-  def encode(item: A): ByteBuffer
-  def decode(data: ByteBuffer): A
-}
-
 /**
  * An optionally-journaled queue built on top of `ConcurrentBlockingQueue` that may have multiple
  * "readers".
@@ -256,57 +251,14 @@ class JournaledQueue(
    * Create a wrapper object for this queue that implements the `BlockingQueue` trait. Not all
    * operations are supported: specifically, `putHead` and `pollIf` throw an exception if called.
    */
-  def toBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): BlockingQueue[A] = {
-    val reader = JournaledQueue.this.reader("")
+  def toBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): BlockingQueue[A] =
+    new JournaledBlockingQueue(this, codec)
 
-    new BlockingQueue[A] {
-      def put(item: A) = {
-        val rv = JournaledQueue.this.put(codec.encode(item), Time.now, None)
-        rv.isDefined && { rv.get.get(); true }
-      }
-
-      def putHead(item: A) {
-        throw new Exception("Unsupported operation")
-      }
-
-      def size: Int = reader.items
-
-      def get(): Future[Option[A]] = get(100.days.fromNow)
-
-      def get(deadline: Time): Future[Option[A]] = {
-        reader.get(Some(deadline)).map { optItem =>
-          optItem.map { item =>
-            reader.commit(item.id)
-            codec.decode(item.data)
-          }
-        }
-      }
-
-      def poll(): Future[Option[A]] = {
-        reader.get(None).map { optItem =>
-          optItem.map { item =>
-            reader.commit(item.id)
-            codec.decode(item.data)
-          }
-        }
-      }
-
-      def pollIf(predicate: A => Boolean): Future[Option[A]] = {
-        throw new Exception("Unsupported operation")
-      }
-
-      def flush() {
-        JournaledQueue.this.flush()
-      }
-
-      def toDebug: String = JournaledQueue.this.toDebug
-
-      def close() {
-        JournaledQueue.this.close()
-      }
-    }
-  }
-
+  /**
+   * Create a wrapper object for this queue that implements the `TransactionalBlockingQueue` trait.
+   */
+  def toTransactionalBlockingQueue[A <: AnyRef](implicit codec: Codec[A]): TransactionalBlockingQueue[A] =
+    new TransactionalJournaledBlockingQueue(this, codec)
 
   /**
    * A reader for this queue, which has its own head pointer and list of open reads.
