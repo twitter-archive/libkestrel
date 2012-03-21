@@ -79,7 +79,6 @@ private[libkestrel] class JournaledBlockingQueue[A <: AnyRef](val queue: Journal
   def pollIf(predicate: A => Boolean): Future[Option[A]] = {
     throw new Exception("Unsupported operation")
   }
-
 }
 
 private[libkestrel] class TransactionalJournaledBlockingQueue[A <: AnyRef](
