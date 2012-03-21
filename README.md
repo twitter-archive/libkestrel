@@ -141,6 +141,9 @@ which will list the available tests. Each test responds to "`--help`".
 
 - JournaledQueue - a `Journal` and its in-memory components (see above)
 
+- JournaledBlockingQueue - JournaledQueue wrappers that provide a simplified
+  interface for users that only use a single reader (with or without
+  transactions)
 
 ## Improvement targets
 
