@@ -158,11 +158,11 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
    * currently available.
    */
   def put(item: A): Boolean = {
-    if (elementCount.get >= maxItems && fullPolicy == FullPolicy.RefusePuts) {
+    if (elementCount.incrementAndGet() > maxItems && fullPolicy == FullPolicy.RefusePuts) {
+      elementCount.decrementAndGet()
       false
     } else {
       queue.add(item)
-      elementCount.incrementAndGet()
       handoff()
       true
     }

@@ -49,6 +49,7 @@ import java.io.File
  *   normal action (give the item to another client) should happen. Return `true` if libkestrel
  *   should consider the matter taken care of, and not do anything more.
  * @param maxExpireSweep Maximum number of expired items to process at once.
+ * @param maxQueueAge If the queue is empty and has existed at least this long, it will be deleted.
  * @param deliveryLatency Code to execute if you wish to track delivery latency (the time between
  *   an item being added and a client being ready to receive it). Normally you would hook this up
  *   to a stats collection library like ostrich.
@@ -65,12 +66,14 @@ case class JournaledQueueReaderConfig(
   processExpiredItem: (QueueItem) => Unit = { _ => },
   errorHandler: (QueueItem) => Boolean = { _ => false },
   maxExpireSweep: Int = Int.MaxValue,
+  maxQueueAge: Option[Duration] = None,
   deliveryLatency: (JournaledQueue#Reader, Duration) => Unit = { (_, _) => },
   timeoutLatency: (JournaledQueue#Reader, Duration) => Unit = { (_, _) => }
 ) {
   override def toString() = {
-    ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d").format(
-      maxItems, maxSize, maxMemorySize, maxAge, fullPolicy, maxExpireSweep)
+    ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d " +
+     "maxQueueAge=%s").format(
+      maxItems, maxSize, maxMemorySize, maxAge, fullPolicy, maxExpireSweep, maxQueueAge)
   }
 }
 

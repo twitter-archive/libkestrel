@@ -1,0 +1,13 @@
+1.0.1
+-----
+release: 26 march 2012
+
+- add TransactionalBlockingQueue wrapped for JournaledQueue. Provides
+  simplified API for single-reader applications.
+
+1.0.0
+-----
+release: 20 march 2012
+
+- initial release!
+

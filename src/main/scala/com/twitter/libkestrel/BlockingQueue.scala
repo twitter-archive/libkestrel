@@ -30,3 +30,20 @@ trait BlockingQueue[A <: AnyRef] {
   def toDebug: String
   def close()
 }
+
+trait Transaction[A <: AnyRef] {
+  def item: A
+  def commit(): Unit
+  def rollback(): Unit
+}
+
+trait TransactionalBlockingQueue[A <: AnyRef] {
+  def put(item: A): Boolean
+  def size: Int
+  def get(): Future[Option[Transaction[A]]]
+  def get(deadline: Time): Future[Option[Transaction[A]]]
+  def poll(): Future[Option[Transaction[A]]]
+  def flush()
+  def toDebug: String
+  def close()
+}
