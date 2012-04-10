@@ -1,3 +1,11 @@
+1.0.2
+-----
+release: 19 april 2012
+
+- convert to sbt 0.11
+- make ConcurrentBlockingQueue#maxItems a hard limit instead of a sloppy limit
+- track putBytes, getHitCount, and getMissCount in JournaledQueue
+
 1.0.1
 -----
 release: 26 march 2012
