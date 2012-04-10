@@ -313,6 +313,30 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
       q.close()
     }
 
+    it("tracks get hit/miss counts") {
+      setupWriteJournals(4, 1)
+      setupBookmarkFile("", 3)
+      val q = makeQueue()
+      try {
+        val reader = q.reader("")
+        assert(reader.getHitCount.get === 0L)
+        assert(reader.getMissCount.get === 0L)
+
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(reader.getHitCount.get === 1L)
+        assert(reader.getMissCount.get === 0L)
+        reader.commit(item.get.id)
+
+        val item2 = reader.get(None)()
+        assert(! item2.isDefined)
+        assert(reader.getHitCount.get === 1L)
+        assert(reader.getMissCount.get === 1L)
+      } finally {
+        q.close()
+      }
+    }
+
     it("tracks open reads") {
       setupWriteJournals(4, 1)
       setupBookmarkFile("", 3)
@@ -664,6 +688,7 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
         assert(item.isDefined)
         assert(bufferToString(item.get.data) === "hi")
         assert(reader.putCount.get === 1)
+        assert(reader.putBytes.get === 2)
         q.close()
       }
 
@@ -684,6 +709,7 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
         assert(item.isDefined)
         assert(bufferToString(item.get.data) === "scoot over")
         assert(reader.putCount.get === 2)
+        assert(reader.putBytes.get === 12)
         assert(reader.discardedCount.get === 1)
         q.close()
       }

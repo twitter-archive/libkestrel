@@ -299,6 +299,21 @@ class JournaledQueue(
     val putCount = new AtomicLong(0)
 
     /**
+     * Total number of bytes ever added to this queue.
+     */
+    val putBytes = new AtomicLong(0)
+
+    /**
+     * Total number of items ever successfully fetched from this queue.
+     */
+    val getHitCount = new AtomicLong(0)
+
+    /**
+     * Total number of times a fetch from this queue failed because no item was available.
+     */
+    val getMissCount = new AtomicLong(0)
+
+    /**
      * Total number of items ever expired from this queue.
      */
     val expiredCount = new AtomicLong(0)
@@ -432,6 +447,7 @@ class JournaledQueue(
         items += 1
         bytes += item.dataSize
         putCount.getAndIncrement()
+        putBytes.getAndAdd(item.dataSize)
 
         // we've already checked canPut by here, but we may still drop the oldest item(s).
         dropOldest()
@@ -510,6 +526,7 @@ class JournaledQueue(
         optItem match {
           case None => {
             readerConfig.timeoutLatency(this, Time.now - startTime)
+            getMissCount.getAndIncrement()
             Future.value(None)
           }
           case s @ Some(item) => {
@@ -518,6 +535,7 @@ class JournaledQueue(
               get(deadline, peeking)
             } else {
               readerConfig.deliveryLatency(this, Time.now - item.addTime)
+              getHitCount.getAndIncrement()
               age = Time.now - item.addTime
               if (peeking) {
                 queue.putHead(item)

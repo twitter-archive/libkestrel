@@ -16,14 +16,16 @@
 
 package com.twitter.libkestrel
 
-import org.scalatest.{BeforeAndAfterEach, Suite}
+import org.scalatest._
 
-trait ResourceCheckingSuite extends Suite with BeforeAndAfterEach {
-  override def afterEach() {
-    if (!MemoryMappedFile.openFiles.isEmpty) {
-      Console.err.println("MemoryMappedFile.openFiles is not empty:")
-      Console.err.println(MemoryMappedFile.openFiles.mkString("\n"))
-      throw new RuntimeException("MemoryMappedFile.openFiles is not empty")
+trait ResourceCheckingSuite extends AbstractSuite { self: Suite =>
+  abstract override def withFixture(test: NoArgTest) {
+    try {
+      super.withFixture(test)
+      assert(MemoryMappedFile.openFiles.isEmpty,
+        "MemoryMappedFile.openFiles is not empty: " + MemoryMappedFile.openFiles.mkString(", "))
+    } finally {
+      MemoryMappedFile.reset()
     }
   }
 }
