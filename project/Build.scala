@@ -3,7 +3,7 @@ import Keys._
 import com.twitter.sbt._
 
 object Libkestrel extends Build {
-  val utilVersion = "1.12.13"
+  val utilVersion = "4.0.0-SNAPSHOT"
 
   lazy val root = Project(
     id = "libkestrel",
@@ -15,7 +15,7 @@ object Libkestrel extends Build {
     name := "libkestrel",
     organization := "com.twitter",
     version := "1.0.3-SNAPSHOT",
-    scalaVersion := "2.9.1",
+    scalaVersion := "2.8.1",
 
     // time-based tests cannot be run in parallel
     logBuffered in Test := false,
