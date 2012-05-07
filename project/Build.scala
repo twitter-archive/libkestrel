@@ -22,8 +22,9 @@ object Libkestrel extends Build {
     parallelExecution in Test := false,
 
     libraryDependencies ++= Seq(
-      "com.twitter" %% "util-core" % utilVersion,
-      "com.twitter" %% "util-logging" % utilVersion,
+      // for now, these are coming from LOCAL repo only:
+      "com.twitter" % "util-core" % utilVersion,
+      "com.twitter" % "util-logging" % utilVersion,
 
       // for tests only:
       "org.scalatest" %% "scalatest" % "1.7.1" % "test",
