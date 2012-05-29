@@ -3,7 +3,7 @@ import Keys._
 import com.twitter.sbt._
 
 object Libkestrel extends Build {
-  val utilVersion = "1.12.13"
+  val utilVersion = "4.0.0"
 
   lazy val root = Project(
     id = "libkestrel",
@@ -14,16 +14,17 @@ object Libkestrel extends Build {
   ).settings(
     name := "libkestrel",
     organization := "com.twitter",
-    version := "1.1.0-SNAPSHOT",
-    scalaVersion := "2.9.1",
+    version := "1.0.4-SNAPSHOT",
+    scalaVersion := "2.8.1",
 
     // time-based tests cannot be run in parallel
     logBuffered in Test := false,
     parallelExecution in Test := false,
 
     libraryDependencies ++= Seq(
-      "com.twitter" %% "util-core" % utilVersion,
-      "com.twitter" %% "util-logging" % utilVersion,
+      // for now, these are coming from LOCAL repo only:
+      "com.twitter" % "util-core" % utilVersion,
+      "com.twitter" % "util-logging" % utilVersion,
 
       // for tests only:
       "org.scalatest" %% "scalatest" % "1.7.1" % "test",
