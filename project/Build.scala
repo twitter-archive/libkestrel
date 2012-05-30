@@ -10,12 +10,14 @@ object Libkestrel extends Build {
     base = file("."),
     settings = Project.defaultSettings ++
       StandardProject.newSettings ++
-      SubversionPublisher.newSettings
+      SubversionPublisher.newSettings ++
+      ScalaTestRunner.testSettings
   ).settings(
     name := "libkestrel",
     organization := "com.twitter",
     version := "1.0.4-SNAPSHOT",
     scalaVersion := "2.9.1",
+    crossPaths := true,
 
     // time-based tests cannot be run in parallel
     logBuffered in Test := false,
@@ -27,7 +29,8 @@ object Libkestrel extends Build {
 
       // for tests only:
       "org.scalatest" %% "scalatest" % "1.7.1" % "test",
-      "com.github.scopt" % "scopt_2.9.1" % "2.0.0" % "test"
+      "com.github.scopt" % "scopt_2.9.1" % "2.0.0" % "test",
+      "com.twitter" %% "scalatest-mixins" % "1.1.0" % "test"
     ),
 
     SubversionPublisher.subversionRepository := Some("https://svn.twitter.biz/maven-public"),
