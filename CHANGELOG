@@ -1,3 +1,9 @@
+1.2.0
+-----
+release: 6 july 2012
+
+- avoid creation of timer tasks when caller is willing to wait "forever"
+
 1.1.0
 -----
 release: 29 may 2012
