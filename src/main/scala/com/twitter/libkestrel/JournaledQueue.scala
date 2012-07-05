@@ -514,7 +514,7 @@ class JournaledQueue(
      * Remove and return an item from the queue, if there is one.
      * If no deadline is given, an item is only returned if one is immediately available.
      */
-    def get(deadline: Option[Time], peeking: Boolean = false): Future[Option[QueueItem]] = {
+    def get(deadline: Option[Deadline], peeking: Boolean = false): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
       discardExpired()
       val startTime = Time.now
@@ -601,7 +601,7 @@ class JournaledQueue(
     /**
      * Peek at the head item in the queue, if there is one.
      */
-    def peek(deadline: Option[Time]): Future[Option[QueueItem]] = {
+    def peek(deadline: Option[Deadline]): Future[Option[QueueItem]] = {
       get(deadline, true)
     }
 

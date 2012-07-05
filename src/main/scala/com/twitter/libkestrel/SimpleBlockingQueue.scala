@@ -3,7 +3,6 @@ package com.twitter.libkestrel
 import java.util.LinkedHashSet
 import scala.collection.mutable
 import scala.collection.JavaConverters._
-import com.twitter.conversions.time._
 import com.twitter.util.{Duration, Future, Promise, Time, TimeoutException, Timer, TimerTask}
 
 object SimpleBlockingQueue {
@@ -54,15 +53,15 @@ final class SimpleBlockingQueue[A <: AnyRef](
 
   def size: Int = queue.size
 
-  def get(): Future[Option[A]] = get(500.days.fromNow)
+  def get(): Future[Option[A]] = get(Forever)
 
-  def get(deadline: Time): Future[Option[A]] = {
+  def get(deadline: Deadline): Future[Option[A]] = {
     val promise = new Promise[Option[A]]
     waitFor(promise, deadline)
     promise
   }
 
-  private def waitFor(promise: Promise[Option[A]], deadline: Time) {
+  private def waitFor(promise: Promise[Option[A]], deadline: Deadline) {
     val item = poll()()
     item match {
       case s @ Some(x) => promise.setValue(s)
@@ -105,6 +104,11 @@ final class SimpleBlockingQueue[A <: AnyRef](
     queue.clear()
     waiters.triggerAll()
   }
+
+  /**
+   * Return the number of consumers waiting for an item.
+   */
+  def waiterCount: Int = waiters.size
 }
 
 /**
@@ -114,15 +118,19 @@ final class SimpleBlockingQueue[A <: AnyRef](
  * exactly one of the functions will be called, never both.
  */
 final class DeadlineWaitQueue(timer: Timer) {
-  case class Waiter(var timerTask: TimerTask, awaken: () => Unit)
+  case class Waiter(var timerTask: Option[TimerTask], awaken: () => Unit)
   private val queue = new LinkedHashSet[Waiter].asScala
 
-  def add(deadline: Time, awaken: () => Unit, onTimeout: () => Unit) = {
-    val waiter = Waiter(null, awaken)
-    val timerTask = timer.schedule(deadline) {
-      if (synchronized { queue.remove(waiter) }) onTimeout()
+  def add(deadline: Deadline, awaken: () => Unit, onTimeout: () => Unit) = {
+    val waiter = Waiter(None, awaken)
+    deadline match {
+      case Before(time) =>
+        val timerTask = timer.schedule(time) {
+          if (synchronized { queue.remove(waiter) }) onTimeout()
+        }
+        waiter.timerTask = Some(timerTask)
+      case Forever => ()
     }
-    waiter.timerTask = timerTask
     synchronized { queue.add(waiter) }
     waiter
   }
@@ -134,7 +142,7 @@ final class DeadlineWaitQueue(timer: Timer) {
         waiter
       }
     }.foreach { waiter =>
-      waiter.timerTask.cancel()
+      waiter.timerTask.foreach { _.cancel() }
       waiter.awaken()
     }
   }
@@ -145,14 +153,14 @@ final class DeadlineWaitQueue(timer: Timer) {
       queue.clear()
       rv
     }.foreach { waiter =>
-      waiter.timerTask.cancel()
+      waiter.timerTask.foreach { _.cancel() }
       waiter.awaken()
     }
   }
 
   def remove(waiter: Waiter) {
     synchronized { queue.remove(waiter) }
-    waiter.timerTask.cancel()
+    waiter.timerTask.foreach { _.cancel() }
   }
 
   def size = {

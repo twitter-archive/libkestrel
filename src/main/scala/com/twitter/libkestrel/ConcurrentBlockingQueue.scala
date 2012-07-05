@@ -97,7 +97,7 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * A queue of readers, some waiting with a timeout, others polling.
    * `consumers` tracks the order for fairness, but `waiterSet` and `pollerSet` are
-   * the definitive sets: a waiter/poller may be the queue, but not in the set, which
+   * the definitive sets: a waiter/poller may be in the queue, but not in the set, which
    * just means that they had a timeout set and gave up or were rejected due to an
    * empty queue.
    */
@@ -191,12 +191,35 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   /**
    * Get the next item from the queue, waiting forever if necessary.
    */
-  def get(): Future[Option[A]] = get(None)
+  def get(): Future[Option[A]] = get(Forever)
 
   /**
    * Get the next item from the queue if it arrives before a timeout.
    */
-  def get(deadline: Time): Future[Option[A]] = get(Some(deadline))
+  def get(deadline: Deadline): Future[Option[A]] = {
+    val promise = new Promise[Option[A]]
+    waiterSet.put(promise, promise)
+    val timerTask =
+      deadline match {
+      case Before(time) =>
+        val timerTask = timer.schedule(time) {
+          if (waiterSet.remove(promise) ne null) {
+            promise.setValue(None)
+          }
+        }
+        Some(timerTask)
+      case Forever => None
+    }
+    consumers.add(Waiter(promise, timerTask))
+    promise.onCancellation {
+      waiterSet.remove(promise)
+      timerTask.foreach { _.cancel() }
+    }
+    if (!queue.isEmpty || !headQueue.isEmpty) handoff()
+    promise
+  }
+
+
 
   /**
    * Get the next item from the queue if one is immediately available.
@@ -221,25 +244,6 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
   def flush() {
     queue.clear()
     headQueue.clear()
-  }
-
-  private def get(deadline: Option[Time]): Future[Option[A]] = {
-    val promise = new Promise[Option[A]]
-    waiterSet.put(promise, promise)
-    val timerTask = deadline.map { d =>
-      timer.schedule(d) {
-        if (waiterSet.remove(promise) ne null) {
-          promise.setValue(None)
-        }
-      }
-    }
-    consumers.add(Waiter(promise, timerTask))
-    promise.onCancellation {
-      waiterSet.remove(promise)
-      timerTask.foreach { _.cancel() }
-    }
-    if (!queue.isEmpty || !headQueue.isEmpty) handoff()
-    promise
   }
 
   /**

@@ -120,7 +120,7 @@ object FloodTest extends LoadTesting {
               polls += 1
               queue.poll()()
             } else {
-              queue.get(1.millisecond.fromNow)()
+              queue.get(Before(1.millisecond.fromNow))()
             }
             if (item.isDefined) count += 1
             if (validate) {

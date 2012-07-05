@@ -70,7 +70,7 @@ class JournaledBlockingQueueSpec extends Spec with ResourceCheckingSuite with Sh
       assert(reader.items === 3)
       assert(reader.openItems === 0)
 
-      assert(blockingQueue.get(100.seconds.fromNow)() === Some("first"))
+      assert(blockingQueue.get(Before(100.seconds.fromNow))() === Some("first"))
       assert(blockingQueue.get()() === Some("second"))
 
       assert(reader.items === 1)
@@ -115,7 +115,7 @@ class JournaledBlockingQueueSpec extends Spec with ResourceCheckingSuite with Sh
       assert(reader.items === 3)
       assert(reader.openItems === 0)
 
-      val txn1 = blockingQueue.get(100.seconds.fromNow)().get
+      val txn1 = blockingQueue.get(Before(100.seconds.fromNow))().get
       val txn2 = blockingQueue.get()().get
 
       assert(txn1.item === "first")
@@ -145,7 +145,7 @@ class JournaledBlockingQueueSpec extends Spec with ResourceCheckingSuite with Sh
       assert(reader.items === 3)
       assert(reader.openItems === 0)
 
-      val txn1 = blockingQueue.get(100.seconds.fromNow)().get
+      val txn1 = blockingQueue.get(Before(100.seconds.fromNow))().get
       val txn2 = blockingQueue.get()().get
 
       assert(txn1.item === "first")

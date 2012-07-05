@@ -149,7 +149,7 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
     it("timeout") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val queue = newQueue()
-        val future = queue.get(10.milliseconds.fromNow)
+        val future = queue.get(Before(10.milliseconds.fromNow))
 
         timeMutator.advance(10.milliseconds)
         timer.tick()
@@ -162,8 +162,8 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
     it("fulfill gets before they timeout") {
       Time.withCurrentTimeFrozen { timeMutator =>
         val queue = newQueue()
-        val future1 = queue.get(10.milliseconds.fromNow)
-        val future2 = queue.get(10.milliseconds.fromNow)
+        val future1 = queue.get(Before(10.milliseconds.fromNow))
+        val future2 = queue.get(Before(10.milliseconds.fromNow))
         queue.put("surprise!")
 
         timeMutator.advance(10.milliseconds)
@@ -176,8 +176,8 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
       }
     }
 
-    describe("really long timeout is cancelled") {
-      val deadline = 7.days.fromNow
+    describe("really long timeout is canceled") {
+      val deadline = Before(7.days.fromNow)
 
       it("when an item arrives") {
         val queue = newQueue()
@@ -190,7 +190,7 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
         assert(timer.tasks.size === 0)
       }
 
-      it("when the future is cancelled") {
+      it("when the future is canceled") {
         val queue = newQueue()
         val future = queue.get(deadline)
         assert(timer.tasks.size === 1)
@@ -198,6 +198,30 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
         future.cancel()
         timer.tick()
         assert(timer.tasks.size === 0)
+        assert(queue.waiterCount === 0)
+      }
+    }
+
+    describe("infinitely long timeout is never created") {
+      val deadline = Forever
+
+      it("but allows items to be retrieved") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 0)
+
+        queue.put("hello!")
+        assert(future() === Some("hello!"))
+        assert(queue.waiterCount === 0)
+      }
+
+      it("but allows future to be canceled") {
+        val queue = newQueue()
+        val future = queue.get(deadline)
+        assert(timer.tasks.size === 0)
+
+        future.cancel()
+        assert(queue.waiterCount === 0)
       }
     }
 

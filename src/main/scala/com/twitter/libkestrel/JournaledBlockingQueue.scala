@@ -16,7 +16,6 @@
 
 package com.twitter.libkestrel
 
-import com.twitter.conversions.time._
 import com.twitter.util.{Future, Time}
 import java.nio.ByteBuffer
 
@@ -51,14 +50,16 @@ private trait JournaledBlockingQueueMixin[A] {
   def close() {
     queue.close()
   }
+
+  def waiterCount = reader.waiterCount
 }
 
 private[libkestrel] class JournaledBlockingQueue[A <: AnyRef](val queue: JournaledQueue, val codec: Codec[A])
     extends BlockingQueue[A] with JournaledBlockingQueueMixin[A] {
 
-  def get(): Future[Option[A]] = get(100.days.fromNow)
+  def get(): Future[Option[A]] = get(Forever)
 
-  def get(deadline: Time): Future[Option[A]] = {
+  def get(deadline: Deadline): Future[Option[A]] = {
     reader.get(Some(deadline)).map { optItem =>
       optItem.map { item =>
         reader.commit(item.id)
@@ -85,9 +86,9 @@ private[libkestrel] class TransactionalJournaledBlockingQueue[A <: AnyRef](
     val queue: JournaledQueue, val codec: Codec[A])
     extends TransactionalBlockingQueue[A] with JournaledBlockingQueueMixin[A] {
 
-  def get(): Future[Option[Transaction[A]]] = get(100.days.fromNow)
+  def get(): Future[Option[Transaction[A]]] = get(Forever)
 
-  def get(deadline: Time): Future[Option[Transaction[A]]] = {
+  def get(deadline: Deadline): Future[Option[Transaction[A]]] = {
     reader.get(Some(deadline)).map { optItem =>
       optItem.map { queueItem =>
         new Transaction[A] {

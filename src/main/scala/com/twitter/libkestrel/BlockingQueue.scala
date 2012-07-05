@@ -18,17 +18,22 @@ package com.twitter.libkestrel
 
 import com.twitter.util.{Future, Time}
 
+sealed abstract class Deadline
+case class Before(deadline: Time) extends Deadline
+case object Forever extends Deadline
+
 trait BlockingQueue[A <: AnyRef] {
   def put(item: A): Boolean
   def putHead(item: A)
   def size: Int
   def get(): Future[Option[A]]
-  def get(deadline: Time): Future[Option[A]]
+  def get(deadline: Deadline): Future[Option[A]]
   def poll(): Future[Option[A]]
   def pollIf(predicate: A => Boolean): Future[Option[A]]
   def flush()
   def toDebug: String
   def close()
+  def waiterCount: Int
 }
 
 trait Transaction[A <: AnyRef] {
@@ -41,9 +46,10 @@ trait TransactionalBlockingQueue[A <: AnyRef] {
   def put(item: A): Boolean
   def size: Int
   def get(): Future[Option[Transaction[A]]]
-  def get(deadline: Time): Future[Option[Transaction[A]]]
+  def get(deadline: Deadline): Future[Option[Transaction[A]]]
   def poll(): Future[Option[Transaction[A]]]
   def flush()
   def toDebug: String
   def close()
+  def waiterCount: Int
 }

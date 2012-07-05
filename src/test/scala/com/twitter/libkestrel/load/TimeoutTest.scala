@@ -95,7 +95,7 @@ object TimeoutTest extends LoadTesting {
         override def run() {
           while (readerDeadline > Time.now) {
             val timeout = readTimeoutHigh + random() % (range + 1)
-            val optItem = queue.get(timeout.milliseconds.fromNow)()
+            val optItem = queue.get(Before(timeout.milliseconds.fromNow))()
             optItem match {
               case None =>
               case Some(item) => {

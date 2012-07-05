@@ -372,7 +372,7 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
       assert(item.get.id === 4L)
       assert(reader.get(None)() === None)
 
-      val future = reader.get(Some(1.second.fromNow))
+      val future = reader.get(Some(Before(1.second.fromNow)))
       reader.unget(item.get.id)
       assert(future.isDefined)
       assert(future().get.id === 4L)
