@@ -27,7 +27,7 @@ object Libkestrel extends Build {
       "com.twitter" % "util-logging" % utilVersion,
 
       // for tests only:
-      "org.scalatest" %% "scalatest" % "1.7.1" % "test",
+      "org.scalatest" %% "scalatest" % "1.8" % "test",
       "com.github.scopt" % "scopt_2.9.1" % "2.0.0" % "test",
       "com.twitter" %% "scalatest-mixins" % "1.1.0" % "test"
     ),
