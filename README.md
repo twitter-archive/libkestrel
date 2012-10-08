@@ -18,6 +18,10 @@ kestrel use this library in its next major release.
 
     $ sbt clean update package-dist
 
+SBT must presently be version 0.11.2 or you'll get build errors (due to SBT
+plugin versioning). Note also that if the script you use to run SBT ("sbt"
+in the example) enables assertions (via java -ea or java -enableassertions)
+the build will fail due to a Scala compiler bug.
 
 ## Community
 
