@@ -15,7 +15,7 @@ object Libkestrel extends Build {
   ).settings(
     name := "libkestrel",
     organization := "com.twitter",
-    version := "1.2.1-SNAPSHOT",
+    version := "1.3.0-SNAPSHOT",
     scalaVersion := "2.9.2",
 
     // time-based tests cannot be run in parallel

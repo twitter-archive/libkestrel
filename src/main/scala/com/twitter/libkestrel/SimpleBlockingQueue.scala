@@ -109,6 +109,10 @@ final class SimpleBlockingQueue[A <: AnyRef](
    * Return the number of consumers waiting for an item.
    */
   def waiterCount: Int = waiters.size
+
+  def evictWaiters() {
+    waiters.evictAll()
+  }
 }
 
 /**
@@ -118,15 +122,15 @@ final class SimpleBlockingQueue[A <: AnyRef](
  * exactly one of the functions will be called, never both.
  */
 final class DeadlineWaitQueue(timer: Timer) {
-  case class Waiter(var timerTask: Option[TimerTask], awaken: () => Unit)
+  case class Waiter(var timerTask: Option[TimerTask], awaken: () => Unit, timeout: () => Unit)
   private val queue = new LinkedHashSet[Waiter].asScala
 
-  def add(deadline: Deadline, awaken: () => Unit, onTimeout: () => Unit) = {
-    val waiter = Waiter(None, awaken)
+  def add(deadline: Deadline, awaken: () => Unit, timeout: () => Unit) = {
+    val waiter = Waiter(None, awaken, timeout)
     deadline match {
       case Before(time) =>
         val timerTask = timer.schedule(time) {
-          if (synchronized { queue.remove(waiter) }) onTimeout()
+          if (synchronized { queue.remove(waiter) }) waiter.timeout()
         }
         waiter.timerTask = Some(timerTask)
       case Forever => ()
@@ -155,6 +159,17 @@ final class DeadlineWaitQueue(timer: Timer) {
     }.foreach { waiter =>
       waiter.timerTask.foreach { _.cancel() }
       waiter.awaken()
+    }
+  }
+
+  def evictAll() {
+    synchronized {
+      val rv = queue.toArray
+      queue.clear()
+      rv
+    }.foreach { waiter =>
+      waiter.timerTask.foreach { _.cancel() }
+      waiter.timeout()
     }
   }
 

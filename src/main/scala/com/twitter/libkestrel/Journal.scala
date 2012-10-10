@@ -31,7 +31,11 @@ case class FileInfo(file: File, headId: Long, tailId: Long, items: Int, bytes: L
 
 object Journal {
   def getQueueNamesFromFolder(path: File): Set[String] = {
-    path.list().filter { name =>
+    path.listFiles().filter { file =>
+      !file.isDirectory()
+    }.map { file =>
+      file.getName
+    }.filter { name =>
       !(name contains "~~")
     }.map { name =>
       name.split('.')(0)

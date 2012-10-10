@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 Twitter, Inc.
+ * Copyright 2012 Twitter, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may
  * not use this file except in compliance with the License. You may obtain
@@ -16,50 +16,57 @@
 
 package com.twitter.libkestrel
 
-import org.scalatest.{AbstractSuite, Spec, Suite}
-import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
+import org.scalatest.{BeforeAndAfter, Spec}
 
-class ItemIdListSpec extends Spec with ResourceCheckingSuite {
+class ItemIdListSpec extends Spec with ResourceCheckingSuite with BeforeAndAfter{
   describe("ItemIdList") {
-    it("add and pop") {
-      val x = new ItemIdList()
-      x.add(Seq(5L, 4L))
-      assert(x.size === 2)
-      assert(x.pop() === Some(5L))
-      assert(x.pop() === Some(4L))
-      assert(x.pop() === None)
+    var iil = new ItemIdList()
+
+    before {
+      iil = new ItemIdList()
     }
 
-    it("remove from the middle") {
-      val x = new ItemIdList()
-      x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      assert(x.pop() === Some(7L))
-      assert(x.remove(Set(5L, 4L, 2L)) === Set(5L, 4L, 2L))
-      assert(x.popAll() === Seq(6L, 3L))
+    it("should add an Integer to the list") {
+      iil.add(3L)
+      assert(iil.size === 1)
     }
 
-    it("remove and pop combined") {
-      val x = new ItemIdList()
-      x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      assert(x.remove(Set(6L)) === Set(6L))
-      assert(x.pop() === Some(7L))
-      assert(x.pop() === Some(5L))
-      assert(x.popAll() === Seq(4L, 3L, 2L))
+    it("should add a sequence of Integers to the list") {
+      iil.add(Seq(1L, 2L, 3L, 4L))
+      assert(iil.size === 4)
     }
 
-    it("remove individually") {
-      val x = new ItemIdList()
-      x.add(Seq(7L, 6L, 5L, 4L, 3L, 2L))
-      assert(x.remove(6L) === true)
-      assert(x.remove(4L) === true)
-      assert(x.remove(4L) === false)
-      assert(x.size === 4)
-      assert(x.toSeq.toList === List(7L, 5L, 3L, 2L))
+    it("should pop one item at a time") {
+      iil.add(Seq(90L, 99L))
+      assert(iil.pop() === Some(90L))
+      assert(iil.pop() === Some(99L))
+    }
 
-      assert(x.remove(5L) === true)
-      assert(x.remove(7L) === true)
-      assert(x.size === 2)
-      assert(x.toSeq.toList === List(3L, 2L))
+    it("should pop None when there's nothing to pop") {
+      assert(iil.pop() === None)
+    }
+
+    it("should pop all items from an index upward") {
+      iil.add(Seq(100L, 200L, 300L, 400L))
+      val expected = Seq(100L, 200L)
+      val actual = iil.pop(2)
+      assert(expected === actual)
+    }
+
+    it("should pop all items from the list") {
+      val seq = Seq(12L, 13L, 14L)
+      iil.add(seq)
+      assert(seq === iil.popAll())
+    }
+
+    it("should return empty seq when pop's count is invalid") {
+      assert(iil.pop(1) === Seq())
+    }
+
+    it("should remove a set of items from the list") {
+      iil.add(Seq(19L, 7L, 20L, 22L))
+      val expected = Set(7L, 20L, 22L)
+      assert(expected === iil.remove(expected))
     }
   }
 }

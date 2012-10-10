@@ -52,6 +52,10 @@ private trait JournaledBlockingQueueMixin[A] {
   }
 
   def waiterCount = reader.waiterCount
+
+  def evictWaiters {
+    reader.evictWaiters()
+  }
 }
 
 private[libkestrel] class JournaledBlockingQueue[A <: AnyRef](val queue: JournaledQueue, val codec: Codec[A])

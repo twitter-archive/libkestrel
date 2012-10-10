@@ -37,8 +37,8 @@ import java.io.File
  *   setting is a release valve to keep a backed-up queue from consuming all memory.
  * @param maxAge Expiration time for items on this queue. Any item that has been sitting on the
  *   queue longer than this duration will be discarded. Clients may also attach an expiration time
- *   when adding items to a queue, but if the expiration time is longer than `maxAge`, `max_Age`
- *   will be used instead.
+ *   when adding items to a queue, in which case the item expires at the earlier of the two
+ *   expiration times.
  * @param fullPolicy What to do if a client attempts to add items to a queue that's reached its
  *   maxItems or maxSize.
  * @param processExpiredItem What to do with items that are expired from this queue. This can be

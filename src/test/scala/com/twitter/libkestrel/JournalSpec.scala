@@ -39,6 +39,36 @@ class JournalSpec extends Spec with ResourceCheckingSuite with ShouldMatchers wi
   def stringToBuffer(s: String) = ByteBuffer.wrap(s.getBytes)
 
   describe("Journal") {
+    describe("#getQueueNamesFromFolder") {
+      it("should identify valid queue names") {
+        new FileOutputStream(testFolder + "/j1").close()
+        new FileOutputStream(testFolder + "/j2").close()
+        assert(Journal.getQueueNamesFromFolder(testFolder) === Set("j1", "j2"))
+      }
+
+      it("should handle queues with archived journals") {
+        new FileOutputStream(testFolder + "/j1").close()
+        new FileOutputStream(testFolder + "/j1.1000").close()
+        new FileOutputStream(testFolder + "/j1.2000").close()
+        new FileOutputStream(testFolder + "/j2").close()
+        assert(Journal.getQueueNamesFromFolder(testFolder) === Set("j1", "j2"))
+      }
+
+      it("should ignore queues with journals being packed") {
+        new FileOutputStream(testFolder + "/j1").close()
+        new FileOutputStream(testFolder + "/j2").close()
+        new FileOutputStream(testFolder + "/j2~~").close()
+        assert(Journal.getQueueNamesFromFolder(testFolder) === Set("j1", "j2"))
+      }
+
+      it("should ignore subdirectories") {
+        new FileOutputStream(testFolder + "/j1").close()
+        new FileOutputStream(testFolder + "/j2").close()
+        new File(testFolder, "subdir").mkdirs()
+        assert(Journal.getQueueNamesFromFolder(testFolder) === Set("j1", "j2"))
+      }
+    }
+
     it("find reader/writer files") {
       Time.withCurrentTimeFrozen { timeMutator =>
         List(

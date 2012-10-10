@@ -273,7 +273,6 @@ class JournaledQueue(
     @volatile var bytes = 0L
     @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
-    @volatile var age = 0.nanoseconds
     @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
@@ -324,6 +323,16 @@ class JournaledQueue(
     val discardedCount = new AtomicLong(0)
 
     /**
+     * Total number of reads opened (transactions) on this queue.
+     */
+    val openedItemCount = new AtomicLong(0)
+
+    /**
+     * Total number of canceled reads (transactions) on this queue.
+     */
+    val canceledItemCount = new AtomicLong(0)
+
+    /**
      * Number of consumers waiting for an item to arrive.
      */
     def waiterCount: Int = queue.waiterCount
@@ -347,6 +356,15 @@ class JournaledQueue(
     }
 
     def writer: JournaledQueue = JournaledQueue.this
+
+    /**
+     * Age of the oldest item in this queue or 0 if the queue is empty.
+     */
+    def age: Duration =
+      queue.peekOldest match {
+        case Some(item) => Time.now - item.addTime
+        case None => 0.nanoseconds
+      }
 
     /*
      * in order to reload the contents of a queue at startup, we need to:
@@ -536,11 +554,11 @@ class JournaledQueue(
             } else {
               readerConfig.deliveryLatency(this, Time.now - item.addTime)
               getHitCount.getAndIncrement()
-              age = Time.now - item.addTime
               if (peeking) {
                 queue.putHead(item)
                 Future.value(Some(item.copy(data = item.data.duplicate())))
               } else {
+                openedItemCount.incrementAndGet
                 openReads.put(item.id, item)
                 item.data.mark()
                 Future.value(s)
@@ -575,7 +593,6 @@ class JournaledQueue(
       bytes -= item.dataSize
       memoryItems -= 1
       memoryBytes -= item.dataSize
-      if (items == 0) age = 0.milliseconds
       fillReadBehind()
     }
 
@@ -589,6 +606,7 @@ class JournaledQueue(
         log.error("Tried to uncommit unknown item %d on %s+%s", id, config.name, name)
         return
       }
+      canceledItemCount.incrementAndGet
       item.data.reset()
       val newItem = item.copy(errorCount = item.errorCount + 1)
       if (readerConfig.errorHandler(newItem)) {
@@ -619,7 +637,6 @@ class JournaledQueue(
         bytes = 0
         memoryItems = 0
         memoryBytes = 0
-        age = 0.nanoseconds
         flushCount.getAndIncrement()
       }
     }
@@ -630,6 +647,10 @@ class JournaledQueue(
           case _ => j.close()
         }
       }
+    }
+
+    def evictWaiters() {
+      queue.evictWaiters()
     }
 
     /**

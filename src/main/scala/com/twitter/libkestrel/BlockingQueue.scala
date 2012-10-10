@@ -34,6 +34,7 @@ trait BlockingQueue[A <: AnyRef] {
   def toDebug: String
   def close()
   def waiterCount: Int
+  def evictWaiters()
 }
 
 trait Transaction[A <: AnyRef] {
@@ -52,4 +53,5 @@ trait TransactionalBlockingQueue[A <: AnyRef] {
   def toDebug: String
   def close()
   def waiterCount: Int
+  def evictWaiters()
 }

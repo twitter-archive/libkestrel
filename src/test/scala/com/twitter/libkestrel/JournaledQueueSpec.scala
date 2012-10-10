@@ -337,28 +337,63 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
       }
     }
 
-    it("tracks open reads") {
-      setupWriteJournals(4, 1)
-      setupBookmarkFile("", 3)
-      val q = makeQueue()
-      val reader = q.reader("")
+    describe("open read tracking") {
+      def setupTracking = {
+        setupWriteJournals(4, 1)
+        setupBookmarkFile("", 3)
+        val q = makeQueue()
+        val reader = q.reader("")
+        (q, reader)
+      }
 
-      val item = reader.get(None)()
-      assert(item.isDefined)
-      assert(item.get.id === 4L)
-      assert(reader.get(None)() === None)
+      it("tracks open reads") {
+        val (q, reader) = setupTracking
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(item.get.id === 4L)
+        assert(reader.get(None)() === None)
 
-      assert(reader.items === 1)
-      assert(reader.bytes === 1024L)
-      assert(reader.openItems === 1)
-      assert(reader.openBytes === 1024L)
+        assert(reader.items === 1)
+        assert(reader.bytes === 1024L)
+        assert(reader.openItems === 1)
+        assert(reader.openBytes === 1024L)
+        assert(reader.openedItemCount.get == 1L)
+        assert(reader.canceledItemCount.get == 0L)
 
-      reader.unget(item.get.id)
-      assert(reader.items === 1)
-      assert(reader.bytes === 1024L)
-      assert(reader.openItems === 0)
-      assert(reader.openBytes === 0L)
-      q.close()
+        q.close()
+      }
+
+      it("tracks canceled reads") {
+        val (q, reader) = setupTracking
+
+        val item = reader.get(None)()
+        reader.get(None)()
+
+        reader.unget(item.get.id)
+        assert(reader.items === 1)
+        assert(reader.bytes === 1024L)
+        assert(reader.openItems === 0)
+        assert(reader.openBytes === 0L)
+        assert(reader.openedItemCount.get == 1L)
+        assert(reader.canceledItemCount.get == 1L)
+        q.close()
+      }
+
+      it("counts opened reads since queue load") {
+        val (q, reader) = setupTracking
+
+        val item = reader.get(None)()
+        reader.get(None)()
+        reader.unget(item.get.id)
+
+        val itemAgain = reader.get(None)()
+        reader.commit(item.get.id)
+
+        assert(reader.openItems === 0)
+        assert(reader.openedItemCount.get == 2L)
+        assert(reader.canceledItemCount.get == 1L)
+        q.close()
+      }
     }
 
     it("gives returned items to the next reader") {
@@ -603,12 +638,16 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
 
         q.put(stringToBuffer("commie"), Time.now, None)
         q.put(stringToBuffer("spooky"), Time.now, None)
-        timeMutator.advance(15.milliseconds)
         assert(reader.age === 0.milliseconds)
+
+        timeMutator.advance(15.milliseconds)
+        assert(reader.age === 15.milliseconds)
+
         val item1 = reader.get(None)()
         assert(item1.isDefined)
         reader.commit(item1.get.id)
         assert(reader.age === 15.milliseconds)
+
         val item2 = reader.get(None)()
         assert(item2.isDefined)
         reader.commit(item2.get.id)

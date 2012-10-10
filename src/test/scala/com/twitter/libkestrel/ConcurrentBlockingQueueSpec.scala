@@ -225,6 +225,34 @@ class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with S
       }
     }
 
+    describe("waiters eviction") {
+      it("should evict waiters with reasonable timeouts") {
+        val queue = newQueue()
+        val futures = (0 until 10).map { i => queue.get(Before(10.seconds.fromNow)) }.toList
+        futures.foreach { f => assert(!f.isDefined) }
+
+        queue.evictWaiters()
+
+        futures.foreach { f =>
+          assert(f.isDefined)
+          assert(f() == None)
+        }
+      }
+
+      it("should evict waiters with infinite timeouts") {
+        val queue = newQueue()
+        val futures = (0 until 10).map { i => queue.get(Forever) }.toList
+        futures.foreach { f => assert(!f.isDefined) }
+
+        queue.evictWaiters()
+
+        futures.foreach { f =>
+          assert(f.isDefined)
+          assert(f() == None)
+        }
+      }
+    }
+
     it("remain calm in the presence of a put-storm") {
       val count = 100
       val queue = newQueue()

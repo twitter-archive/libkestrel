@@ -299,6 +299,13 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     }
   }
 
+  private[this] def dumpWaiterSet() {
+    waiterSet.keySet.asScala.toArray.foreach { waiter =>
+      waiter.setValue(None)
+      waiterSet.remove(waiter)
+    }
+  }
+
   private[this] def dumpPollerSet() {
     pollerSet.keySet.asScala.toArray.foreach { poller =>
       poller.setValue(None)
@@ -316,5 +323,17 @@ final class ConcurrentBlockingQueue[A <: AnyRef](
     headQueue.clear()
     waiterSet.asScala.keys.foreach { _.setValue(None) }
     pollerSet.asScala.keys.foreach { _.setValue(None) }
+  }
+
+  def peekOldest: Option[A] = {
+    Option(queue.peek()) match {
+      case s@Some(_) => s
+      case None => Option(headQueue.peek()) // check for returned items
+    }
+  }
+
+  def evictWaiters() {
+    dumpWaiterSet()
+    dumpPollerSet()
   }
 }
