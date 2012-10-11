@@ -23,7 +23,7 @@ trait ResourceCheckingSuite extends AbstractSuite { self: Suite =>
     try {
       super.withFixture(test)
       assert(MemoryMappedFile.openFiles.isEmpty,
-        "MemoryMappedFile.openFiles is not empty: " + MemoryMappedFile.openFiles.mkString(", "))
+        "MemoryMappedFile.openFiles is not empty: %s (did you forget to close a JournaledQueue?)".format(MemoryMappedFile.openFiles.mkString(", ")))
     } finally {
       MemoryMappedFile.reset()
     }
