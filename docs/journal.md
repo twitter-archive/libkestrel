@@ -68,9 +68,9 @@ Header:
 
   - i32 data size
   - i32 error_count
-  - i64 xid
-  - i64 add_time (msec)
-  - i64 expire_time (msec) [optional]
+  - i64 item_id
+  - i64 add_time (msec, absolute epoch time)
+  - i64 expire_time (msec, absolute epoch time) [optional]
 
 Data:
 
