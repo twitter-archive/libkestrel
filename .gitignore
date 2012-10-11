@@ -14,3 +14,4 @@ ignore/
 .scala_dependencies
 .#*
 *~
+[#]*[#]

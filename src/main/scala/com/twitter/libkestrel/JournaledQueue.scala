@@ -185,10 +185,19 @@ class JournaledQueue(
   }
 
   /**
-   * Do a sweep of each reader, and discard any expired items.
+   * Do a sweep of each reader, discarding all expired items up to the reader's configured
+   * `maxExpireSweep`. Returns the total number of items expired across all readers.
    */
-  def discardExpired() {
-    readerMap.values foreach { _.discardExpired() }
+  def discardExpired(): Int = discardExpired(true)
+
+  /**
+   * Do a sweep of each reader, discarding expired items at the head of the reader's queue. If
+   * applyMaxExpireSweep is true, the reader's currently configured `maxExpireSweep` limit is
+   * enforced, otherwise expiration continues until there are no more expired items at the head
+   * of the queue. Returns the total number of items expired across all readers.
+   */
+  def discardExpired(applyMaxExpireSweep: Boolean): Int = {
+    readerMap.values.foldLeft(0) { _ + _.discardExpired(applyMaxExpireSweep)() }
   }
 
   /**
@@ -273,7 +282,6 @@ class JournaledQueue(
     @volatile var bytes = 0L
     @volatile var memoryItems = 0
     @volatile var memoryBytes = 0L
-    @volatile var expired = 0L
 
     private val openReads = new ConcurrentHashMap[Long, QueueItem]()
 
@@ -441,7 +449,7 @@ class JournaledQueue(
 
     // this happens within the serialized block of a put.
     private[libkestrel] def put(item: QueueItem) {
-      discardExpired()
+      discardExpiredWithoutLimit()
       serialized {
         val inReadBehind = journalReader.map { j =>
           // if item.id <= j.readBehindId, fillReadBehind already saw this item.
@@ -482,29 +490,39 @@ class JournaledQueue(
       adjusted.isDefined && adjusted.get <= now
     }
 
-    def discardExpired() {
-      discardExpired(readerConfig.maxExpireSweep)
+    def discardExpiredWithoutLimit() = discardExpired(false)
+
+    def discardExpired(applyMaxExpireSweep: Boolean = true): Future[Int] = {
+      val max = if (applyMaxExpireSweep) readerConfig.maxExpireSweep else Int.MaxValue
+      discardExpired(max)
     }
 
     // check the in-memory portion of the queue and discard anything that's expired.
-    def discardExpired(max: Int) {
-      if (max == 0) return
-      queue.pollIf { item => hasExpired(item.addTime, item.expireTime, Time.now) } map { itemOption =>
-        itemOption foreach { item =>
-          readerConfig.processExpiredItem(item)
-          expiredCount.getAndIncrement()
-          serialized {
-            items -= 1
-            bytes -= item.dataSize
-            memoryItems -= 1
-            memoryBytes -= item.dataSize
-            expired += 1
-            journalReader.foreach { _.commit(item.id) }
-            fillReadBehind()
+    private[this] def discardExpired(max: Int): Future[Int] = {
+      def expireLoop(remainingAttempts: Int, numExpired: Int): Future[(Int, Int)] = {
+        if (remainingAttempts == 0) return Future.value { (0, numExpired) }
+        val expireFuture =
+          queue.pollIf { item => hasExpired(item.addTime, item.expireTime, Time.now) } map {
+            case Some(item) =>
+              readerConfig.processExpiredItem(item)
+              expiredCount.getAndIncrement()
+              serialized {
+                items -= 1
+                bytes -= item.dataSize
+                memoryItems -= 1
+                memoryBytes -= item.dataSize
+                journalReader.foreach { _.commit(item.id) }
+                fillReadBehind()
+              }
+              (remainingAttempts - 1, numExpired + 1)
+            case None =>
+              (0, numExpired)
           }
-          discardExpired(max - 1)
-        }
+
+        expireFuture flatMap { case (remaining, expired) => expireLoop(remaining, expired) }
       }
+
+      expireLoop(max, 0) map { case (_, expired) => expired }
     }
 
     // if we're in read-behind mode, scan forward in the journal to keep memory as full as
@@ -534,7 +552,7 @@ class JournaledQueue(
      */
     def get(deadline: Option[Deadline], peeking: Boolean = false): Future[Option[QueueItem]] = {
       if (closed) return Future.value(None)
-      discardExpired()
+      discardExpiredWithoutLimit()
       val startTime = Time.now
       val future = deadline match {
         case Some(d) => queue.get(d)

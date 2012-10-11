@@ -536,80 +536,199 @@ class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatc
       q.close()
     }
 
-    it("expires old items") {
-      setupWriteJournals(4, 1, expiredItems = 1)
-      setupBookmarkFile("", 0)
-      val q = makeQueue()
-      val reader = q.reader("")
-
-      assert(reader.expired === 0)
-      val item = reader.get(None)()
-      assert(item.isDefined)
-      assert(item.get.id === 2L)
-      assert(eventually(reader.expired == 1))
-      assert(reader.expiredCount.get === 1)
-      q.close()
-    }
-
-    it("sends expired items to the callback") {
-      Time.withCurrentTimeFrozen { timeMutator =>
-        var received: Option[QueueItem] = None
-        def callback(item: QueueItem) {
-          received = Some(item)
-        }
-
-        val q = makeQueue(readerConfig = makeReaderConfig.copy(processExpiredItem = callback))
+    describe("old item expiration") {
+      it("expires old items on get") {
+        setupWriteJournals(4, 1, expiredItems = 1)
+        setupBookmarkFile("", 0)
+        val q = makeQueue()
         val reader = q.reader("")
-        q.put(stringToBuffer("dead!"), Time.now, Some(1.second.fromNow))
 
-        timeMutator.advance(1.second)
-        assert(reader.get(None)() === None)
-        assert(received.isDefined)
-        assert(bufferToString(received.get.data) === "dead!")
+        assert(reader.expiredCount.get === 0)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(item.get.id === 2L)
+        assert(eventually(reader.expiredCount.get == 1))
         q.close()
       }
-    }
 
-    it("limits the number of expirations in a single sweep") {
-      Time.withCurrentTimeFrozen { timeMutator =>
-        var received: List[String] = Nil
-        def callback(item: QueueItem) {
-          received ::= bufferToString(item.data)
+      it("expires old items on put") {
+        setupWriteJournals(4, 1, expiredItems = 1)
+        setupBookmarkFile("", 0)
+        val q = makeQueue()
+        val reader = q.reader("")
+
+        assert(reader.expiredCount.get === 0)
+        q.put(stringToBuffer("new item"), Time.now, None)
+        val item = reader.get(None)()
+        assert(item.isDefined)
+        assert(item.get.id === 2L)
+        assert(eventually(reader.expiredCount.get == 1))
+        q.close()
+      }
+
+      it("sends expired items to the callback") {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          var received: Option[QueueItem] = None
+          def callback(item: QueueItem) {
+            received = Some(item)
+          }
+
+          val q = makeQueue(readerConfig = makeReaderConfig.copy(processExpiredItem = callback))
+          val reader = q.reader("")
+          q.put(stringToBuffer("dead!"), Time.now, Some(1.second.fromNow))
+
+          timeMutator.advance(1.second)
+          assert(reader.get(None)() === None)
+          assert(received.isDefined)
+          assert(bufferToString(received.get.data) === "dead!")
+          q.close()
         }
+      }
+
+      it("limits the number of expirations in a single sweep") {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          var received: List[String] = Nil
+          def callback(item: QueueItem) {
+            received ::= bufferToString(item.data)
+          }
+
+          val q = makeQueue(readerConfig = makeReaderConfig.copy(
+            processExpiredItem = callback,
+            maxExpireSweep = 3
+          ))
+          val reader = q.reader("")
+          (1 to 10).foreach { id =>
+            q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
+          }
+
+          timeMutator.advance(100.milliseconds)
+          assert(reader.items === 10)
+          assert(received === Nil)
+
+          q.discardExpired()
+          assert(reader.items === 7)
+          assert(received === List("3", "2", "1"))
+          received = Nil
+
+          q.discardExpired()
+          assert(reader.items === 4)
+          assert(received === List("6", "5", "4"))
+          q.close()
+        }
+      }
+
+      it("ignores maxExpireSweep when expiring items on get/put") {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val q = makeQueue(readerConfig = makeReaderConfig.copy(
+            maxExpireSweep = 3
+          ))
+          val reader = q.reader("")
+          (1 to 10).foreach { id =>
+            q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
+          }
+
+          timeMutator.advance(100.milliseconds)
+          assert(reader.items === 10)
+
+          q.put(stringToBuffer("poof"), Time.now, None)
+          assert(reader.items === 1)
+          q.flush()
+
+          (1 to 10).foreach { id =>
+            q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
+          }
+
+          timeMutator.advance(100.milliseconds)
+          assert(reader.items === 10)
+
+          assert(!reader.get(None)().isDefined)
+          assert(reader.items === 0)
+
+          q.close()
+        }
+      }
+
+      it("defaults expiration of items with a limit") {
+        setupWriteJournals(10, 1, expiredItems = 9)
+        setupBookmarkFile("", 0)
 
         val q = makeQueue(readerConfig = makeReaderConfig.copy(
-          processExpiredItem = callback,
           maxExpireSweep = 3
         ))
         val reader = q.reader("")
-        (1 to 10).foreach { id =>
-          q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
-        }
 
-        timeMutator.advance(100.milliseconds)
-        assert(reader.items === 10)
-        assert(received === Nil)
-
-        q.put(stringToBuffer("poof"), Time.now, None)
-        assert(reader.items === 8)
-        assert(received === List("3", "2", "1"))
-        received = Nil
-
-        q.put(stringToBuffer("poof"), Time.now, None)
-        assert(reader.items === 6)
-        assert(received === List("6", "5", "4"))
+        assert(reader.expiredCount.get === 0)
+        assert(q.discardExpired() === 3)
+        assert(reader.expiredCount.get === 3)
+        assert(reader.items === 7)
         q.close()
       }
-    }
 
-    it("honors default expiration") {
-      Time.withCurrentTimeFrozen { timeMutator =>
-        val q = makeQueue(readerConfig = makeReaderConfig.copy(maxAge = Some(1.second)))
-        q.put(stringToBuffer("hi"), Time.now, None)
+      it("allows explicit expiration of items without limit") {
+        setupWriteJournals(10, 1, expiredItems = 9)
+        setupBookmarkFile("", 0)
 
-        timeMutator.advance(1.second)
-        assert(q.reader("").get(None)() === None)
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          maxExpireSweep = 3
+        ))
+        val reader = q.reader("")
+
+        assert(reader.expiredCount.get === 0)
+        assert(q.discardExpired(false) === 9)
+        assert(reader.expiredCount.get === 9)
         q.close()
+      }
+
+      it("stops unlimited expiration when queue is empty") {
+        setupWriteJournals(10, 1, expiredItems = 10)
+        setupBookmarkFile("", 0)
+
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          maxExpireSweep = 3
+        ))
+        val reader = q.reader("")
+
+        assert(reader.items == 10)
+        assert(q.discardExpired(false) === 10)
+        assert(reader.items == 0)
+        q.close()
+      }
+
+      it("reports number of expired items across readers") {
+        setupWriteJournals(10, 1, expiredItems = 9)
+        setupBookmarkFile("1", 0)
+        setupBookmarkFile("2", 0)
+        setupBookmarkFile("3", 0)
+
+        val q = makeQueue(readerConfig = makeReaderConfig.copy(
+          maxExpireSweep = 3
+        ))
+        val reader1 = q.reader("1")
+        val reader2 = q.reader("2")
+        val reader3 = q.reader("3")
+
+        assert(reader1.items === 10)
+        assert(reader2.items === 10)
+        assert(reader3.items === 10)
+        assert(reader1.expiredCount.get === 0)
+        assert(reader2.expiredCount.get === 0)
+        assert(reader3.expiredCount.get === 0)
+        assert(q.discardExpired() >= 3)
+        assert(reader1.expiredCount.get === 3)
+        assert(reader2.expiredCount.get === 3)
+        assert(reader3.expiredCount.get === 3)
+        q.close()
+      }
+
+      it("honors default expiration") {
+        Time.withCurrentTimeFrozen { timeMutator =>
+          val q = makeQueue(readerConfig = makeReaderConfig.copy(maxAge = Some(1.second)))
+          q.put(stringToBuffer("hi"), Time.now, None)
+
+          timeMutator.advance(1.second)
+          assert(q.reader("").get(None)() === None)
+          q.close()
+        }
       }
     }
 
