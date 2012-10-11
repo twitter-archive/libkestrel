@@ -23,11 +23,11 @@ import java.io._
 import java.nio.{ByteBuffer, ByteOrder}
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.atomic.AtomicLong
-import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.{AbstractSuite, FunSpec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import config._
 
-class JournaledQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 

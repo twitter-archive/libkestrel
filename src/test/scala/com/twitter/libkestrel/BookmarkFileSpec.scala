@@ -21,10 +21,10 @@ import com.twitter.io.Files
 import com.twitter.util._
 import java.io._
 import java.nio.ByteBuffer
-import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.{AbstractSuite, FunSpec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class BookmarkFileSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class BookmarkFileSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   import FileHelper._
 
   describe("BookmarkFile") {

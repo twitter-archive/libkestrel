@@ -20,10 +20,10 @@ import com.twitter.conversions.storage._
 import com.twitter.util.StorageUnit
 import java.io.{File, IOException}
 import java.nio.ByteBuffer
-import org.scalatest.Spec
+import org.scalatest.FunSpec
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class MemoryMappedFileSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class MemoryMappedFileSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   import FileHelper._
 
   val mmapSize = 16.kilobytes

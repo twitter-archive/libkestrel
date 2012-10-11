@@ -21,10 +21,10 @@ import com.twitter.libkestrel.config._
 import com.twitter.util.JavaTimer
 import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledThreadPoolExecutor
-import org.scalatest.Spec
+import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
 
-class JournaledBlockingQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournaledBlockingQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 

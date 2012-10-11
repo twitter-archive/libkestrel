@@ -20,10 +20,10 @@ import com.twitter.conversions.time._
 import com.twitter.util.Duration
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicInteger
-import org.scalatest.{AbstractSuite, BeforeAndAfter, Spec, Suite}
+import org.scalatest.{AbstractSuite, BeforeAndAfter, FunSpec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
-class PeriodicSyncFileSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging with BeforeAndAfter {
+class PeriodicSyncFileSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging with BeforeAndAfter {
   describe("PeriodicSyncTask") {
     var scheduler: ScheduledThreadPoolExecutor = null
     var invocations: AtomicInteger = null

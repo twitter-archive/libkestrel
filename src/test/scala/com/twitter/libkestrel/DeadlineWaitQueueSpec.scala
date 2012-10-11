@@ -19,9 +19,9 @@ package com.twitter.libkestrel
 import com.twitter.conversions.time._
 import com.twitter.util.{MockTimer, Time, TimeControl}
 import java.util.concurrent.atomic.AtomicInteger
-import org.scalatest.{BeforeAndAfter, Spec}
+import org.scalatest.{BeforeAndAfter, FunSpec}
 
-class DeadlineWaitQueueSpec extends Spec with BeforeAndAfter {
+class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
   describe("DeadlineWaitQueue") {
     val timer = new MockTimer
     var timeouts = new AtomicInteger(0)

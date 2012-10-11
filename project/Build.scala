@@ -32,6 +32,7 @@ object Libkestrel extends Build {
       "com.twitter" % "scalatest-mixins_2.9.1" % "1.1.0" % "test"
     ),
 
+    scalacOptions += "-deprecation",
     SubversionPublisher.subversionRepository := Some("https://svn.twitter.biz/maven-public"),
     publishArtifact in Test := true
   )

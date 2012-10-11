@@ -16,9 +16,9 @@
 
 package com.twitter.libkestrel
 
-import org.scalatest.{BeforeAndAfter, Spec}
+import org.scalatest.{BeforeAndAfter, FunSpec}
 
-class ItemIdListSpec extends Spec with ResourceCheckingSuite with BeforeAndAfter{
+class ItemIdListSpec extends FunSpec with ResourceCheckingSuite with BeforeAndAfter{
   describe("ItemIdList") {
     var iil = new ItemIdList()
 

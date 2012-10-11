@@ -18,11 +18,11 @@ package com.twitter.libkestrel
 
 import com.twitter.conversions.time._
 import com.twitter.util._
-import org.scalatest.{AbstractSuite, Spec, Suite}
+import org.scalatest.{AbstractSuite, FunSpec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import scala.collection.mutable
 
-class ConcurrentBlockingQueueSpec extends Spec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class ConcurrentBlockingQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
   implicit var timer: MockTimer = null
 
   trait QueueBuilder {
