@@ -16,11 +16,9 @@ resolvers <<= (resolvers) { r =>
       "maven" at "http://repo1.maven.org/maven2/",
       "freemarker" at "http://freemarker.sourceforge.net/maven2/"
     )
-  }) ++ Seq("local" at ("file:" + System.getProperty("user.home") + "/.m2/repo/"))
+  }) ++ Seq("local" at ("file:" + System.getProperty("user.home") + "/.m2/repository/"))
 }
 
 externalResolvers <<= (resolvers) map identity
 
 addSbtPlugin("com.twitter" % "sbt-package-dist" % "1.0.6")
-
-addSbtPlugin("com.twitter" %% "sbt-scalatest-runner" % "1.0.2")

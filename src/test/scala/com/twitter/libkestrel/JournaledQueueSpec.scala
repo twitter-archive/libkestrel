@@ -24,10 +24,11 @@ import java.nio.{ByteBuffer, ByteOrder}
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.{AbstractSuite, FunSpec, Suite}
+import org.scalatest.concurrent.Eventually
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 import config._
 
-class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging with Eventually {
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 
@@ -73,15 +74,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
     buffer.putLong(id)
     buffer.rewind
     buffer
-  }
-
-  def eventually(f: => Boolean): Boolean = {
-    val deadline = 5.seconds.fromNow
-    while (deadline > Time.now) {
-      if (f) return true
-      Thread.sleep(10)
-    }
-    false
   }
 
   def setupWriteJournals(itemsPerJournal: Int, journals: Int, expiredItems: Int = 0) {
@@ -547,7 +539,7 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(item.get.id === 2L)
-        assert(eventually(reader.expiredCount.get == 1))
+        eventually { assert(reader.expiredCount.get == 1) }
         q.close()
       }
 
@@ -562,7 +554,7 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         val item = reader.get(None)()
         assert(item.isDefined)
         assert(item.get.id === 2L)
-        assert(eventually(reader.expiredCount.get == 1))
+        eventually { assert(reader.expiredCount.get == 1) }
         q.close()
       }
 
@@ -861,7 +853,7 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         assert(reader.items === 1)
 
         q.put(stringToBuffer("scoot over"), Time.now, None)
-        assert(eventually(reader.items == 1))
+        eventually { assert(reader.items == 1) }
 
         val item = reader.get(None)()
         assert(item.isDefined)
