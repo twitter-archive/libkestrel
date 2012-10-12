@@ -27,7 +27,7 @@ object Libkestrel extends Build {
 
       // for tests only:
       "org.scalatest" %% "scalatest" % "1.8" % "test",
-      "com.github.scopt" % "scopt_2.9.2" % "2.1.0" % "test",
+      "com.github.scopt" %% "scopt" % "2.1.0" % "test",
       "com.twitter" % "scalatest-mixins_2.9.1" % "1.1.0" % "test"
     ),
 
