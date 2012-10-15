@@ -85,6 +85,8 @@ class JournaledQueue(
   // checkpoint readers on a schedule.
   timer.schedule(config.checkpointTimer) { checkpoint() }
 
+  val name = config.name
+
   /**
    * A read-only view of all the current `Reader` objects for this queue.
    */
