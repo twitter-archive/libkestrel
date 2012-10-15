@@ -272,7 +272,7 @@ class JournaledQueue(
   /**
    * A reader for this queue, which has its own head pointer and list of open reads.
    */
-  class Reader(private[libkestrel] var name: String, val readerConfig: JournaledQueueReaderConfig)
+  class Reader(val name: String, val readerConfig: JournaledQueueReaderConfig)
     extends Serialized
   {
     val journalReader = journal.map { _.reader(name) }
