@@ -94,8 +94,9 @@ case class JournaledQueueReaderConfig(
  *   reduce the maximum throughput of the server in exchange for a lower chance of losing data.
  * @param saveArchivedJournals Optionally move "retired" journal files to this folder. Normally,
  *   once a journal file only refers to items that have all been removed, it's erased.
- * @param checkpointTimer How often to check this queue for expired items and proactively remove
- *   them. This prevents rarely-used queues from filling up with expired items.
+ * @param checkpointTimer How often to checkpoint the journal and readers associated with this queue.
+ *   Checkpointing stores each reader's position on disk and causes old journal files to be deleted
+ *   (provided that all extant readers are finished with them).
  * @param readerConfigs Configuration to use for readers of this queue.
  * @param defaultReaderConfig Configuration to use for readers of this queue when the reader name
  *   isn't in readerConfigs.
