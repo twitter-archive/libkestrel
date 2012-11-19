@@ -56,18 +56,18 @@ blocked.
 
 ## JournaledQueue
 
-A JournaledQueue is an optionally-journaled queue built on top of
-`ConcurrentBlockingQueue` that may have multiple "readers", each of which may
-have multiple consumers.
+A JournaledQueue is a journaled queue that may have multiple "readers", each of
+which may have multiple consumers.
 
 ### Puts
 
-When an item is added to a queue, it's journaled and passed on to any readers.
-There is always at least one reader, and the reader contains the actual
-in-memory queue. If there are multiple readers, they behave as multiple
-independent queues, each receiving a copy of each item added to the
-`JournaledQueue`, but sharing a single journal. They may have different
-policies on memory use, queue size limits, and item expiration.
+When an item is added to a queue, it's journaled and notifiation is passed on
+to any readers.  There is always at least one reader, and the reader knows its
+current location in the memory-mapped journal file. If there are multiple
+readers, they behave as multiple independent queues, each receiving a copy of
+each item added to the `JournaledQueue`, but sharing a single journal. They may
+have different policies on queue size limits, item expiration, and error
+handling.
 
 ### Gets
 
@@ -143,7 +143,7 @@ which will list the available tests. Each test responds to "`--help`".
 - Journal - representation of a collection of files (the writer files and a
   file for each reader)
 
-- JournaledQueue - a `Journal` and its in-memory components (see above)
+- JournaledQueue - a `Journal` based queue implementation
 
 - JournaledBlockingQueue - JournaledQueue wrappers that provide a simplified
   interface for users that only use a single reader (with or without
@@ -157,4 +157,3 @@ which will list the available tests. Each test responds to "`--help`".
 
 - Nick suggested that writing all of the readers into the same file could
   reduce disk I/O by writing fewer blocks during reader checkpointing.
-
