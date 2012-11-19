@@ -23,7 +23,13 @@ import com.twitter.conversions.storage._
 import com.twitter.conversions.time._
 import com.twitter.util.{Duration, Time}
 
-class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Boolean, reader: Boolean) {
+sealed trait DumpMode
+case object DumpString extends DumpMode
+case object DumpRaw extends DumpMode
+case object DumpHex extends DumpMode
+case object DumpBase64 extends DumpMode
+
+class QueueDumper(filename: String, quiet: Boolean, dumpMode: Option[DumpMode], reader: Boolean) {
   var operations = 0L
   var bytes = 0L
   var firstId = 0L
@@ -44,6 +50,10 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
       }
       var lastDisplay = 0L
 
+      val dumpRaw = dumpMode match {
+        case Some(DumpRaw) => true
+        case _ => false
+      }
       var position = file.position
       file.foreach { record =>
         operations += 1
@@ -73,6 +83,22 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
     }
   }
 
+  def encodeData(data: Array[Byte]): String = {
+    dumpMode match {
+      case Some(DumpHex) =>
+        val builder =
+          data.map { byte =>
+            "%02x".format(byte.toInt & 0xFF)
+          }.foldLeft(new StringBuilder(data.length * 3)) { (b, s) =>
+            b.append(s).append(" ")
+            b
+          }
+        builder.toString.trim
+      case Some(DumpBase64) => new sun.misc.BASE64Encoder().encode(data)
+      case _ => new String(data, "ISO-8859-1") // raw, string, none
+    }
+  }
+
   def dumpItem(position: Long, record: Record) {
     val now = Time.now
     verbose("%08x  ", position & 0xffffffffL)
@@ -81,7 +107,7 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
         if (firstId == 0) firstId = item.id
         lastId = item.id
         if (!quiet) {
-          verbose("PUT %-6d id=%d", item.dataSize, item.id)
+          verbose("PUT %-6d @ %s id=%d", item.dataSize, item.addTime, item.id)
           if (item.expireTime.isDefined) {
             if (item.expireTime.get - now < 0.milliseconds) {
               verbose(" expired")
@@ -94,10 +120,10 @@ class QueueDumper(filename: String, quiet: Boolean, dump: Boolean, dumpRaw: Bool
         }
         val data = new Array[Byte](item.dataSize)
         item.data.get(data)
-        if (dump) {
-          println("    " + new String(data, "ISO-8859-1"))
-        } else if (dumpRaw) {
-          print(new String(data, "ISO-8859-1"))
+        dumpMode match {
+          case Some(DumpRaw) => print(encodeData(data))
+          case None => ()
+          case _ => println("    " + encodeData(data))
         }
       case Record.ReadHead(id) =>
         verbose("HEAD %d\n", id)
@@ -115,6 +141,8 @@ object QueueDumper {
   var quiet = false
   var dump = false
   var dumpRaw = false
+  var dumpHex = false
+  var dumpBase64 = false
   var reader = false
 
   def usage() {
@@ -126,6 +154,8 @@ object QueueDumper {
     println("    -q      quiet: don't describe every line, just the summary")
     println("    -d      dump contents of added items")
     println("    -A      dump only the raw contents of added items")
+    println("    -x      dump contents as hex")
+    println("    -64     dump contents as base 64")
     println("    -R      file is a reader pointer")
     println()
   }
@@ -146,6 +176,12 @@ object QueueDumper {
         dumpRaw = true
         quiet = true
         parseArgs(xs)
+      case "-x" :: xs =>
+        dumpHex = true
+        parseArgs(xs)
+      case "-64" :: xs =>
+        dumpBase64 = true
+        parseArgs(xs)
       case "-R" :: xs =>
         reader = true
         parseArgs(xs)
@@ -162,9 +198,16 @@ object QueueDumper {
       System.exit(0)
     }
 
+    val dumpMode =
+      if (dumpRaw) Some(DumpRaw)
+      else if (dumpHex) Some(DumpHex)
+      else if (dumpBase64) Some(DumpBase64)
+      else if (dump) Some(DumpString)
+      else None
+
     for (filename <- filenames) {
       if (!quiet) println("Queue: " + filename)
-      new QueueDumper(filename, quiet, dump, dumpRaw, reader)()
+      new QueueDumper(filename, quiet, dumpMode, reader)()
     }
   }
 }

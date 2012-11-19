@@ -34,6 +34,12 @@ abstract class RecordReader extends Iterable[Record] {
     magic
   }
 
+  def mark: Int = reader.position
+
+  def rewind(position: Int) {
+    reader.position(position)
+  }
+
   def readNext(): Option[Record] = {
     val lastPosition = reader.position
 

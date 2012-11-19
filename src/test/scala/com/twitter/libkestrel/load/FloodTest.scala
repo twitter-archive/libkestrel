@@ -21,7 +21,7 @@ import java.util.concurrent.{CountDownLatch, ConcurrentHashMap}
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLongArray, AtomicIntegerArray}
 import scala.collection.JavaConverters._
 import com.twitter.conversions.time._
-import com.twitter.util.{TimeoutException, Time, JavaTimer, Timer}
+import com.twitter.util.Time
 
 object FloodTest extends LoadTesting {
   val description = "put & get items to/from a queue as fast as possible"
@@ -82,6 +82,7 @@ object FloodTest extends LoadTesting {
 
     val writers = (0 until writerThreadCount).map { threadId =>
       new Thread() {
+        setName("writer-%d".format(threadId))
         override def run() {
           var id = 0
           while (deadline > Time.now) {
@@ -110,6 +111,7 @@ object FloodTest extends LoadTesting {
 
     val readers = (0 until readerThreadCount).map { threadId =>
       new Thread() {
+        setName("reader-%d".format(threadId))
         override def run() {
           startLatch.await()
           val startTime = System.nanoTime
@@ -152,6 +154,7 @@ object FloodTest extends LoadTesting {
       println(queue.toDebug)
     }
 
+    queue.evictWaiters()
     readers.foreach { _.join() }
     writers.foreach { _.join() }
 
@@ -171,9 +174,9 @@ object FloodTest extends LoadTesting {
           (0 until lastId.get(threadId)).foreach { id =>
             val atom = received(threadId).get(id)
             if (atom eq null) {
-              print("%d ".format(id))
+              print("%d(0) ".format(id))
             } else if (atom.get() != 1) {
-              print("%d(%d) ".format(atom.get()))
+              print("%d(%d) ".format(id, atom.get()))
             }
           }
           println()
@@ -183,7 +186,7 @@ object FloodTest extends LoadTesting {
         }
         received(threadId).asScala.foreach { case (id, count) =>
           if (count.get() != 1) {
-            println("*** Writer %d item %d expected 1 receive, got %d".format(
+            println("*** Writer %d's item %d expected 1 receive, got %d".format(
               threadId, id, count.get()
             ))
             ok = false
@@ -191,6 +194,19 @@ object FloodTest extends LoadTesting {
         }
       }
       if (ok) println("All good. :)")
+    } else {
+      val totalRead = (0 until readerThreadCount).foldLeft(0) { (total, threadId) =>
+        total + readCounts.get(threadId)
+      }
+      val totalWritten = (0 until writerThreadCount).foldLeft(0) { (total, threadId) =>
+        total + lastId.get(threadId)
+      }
+      println("Writer wrote %d, readers received %d".format(totalWritten, totalRead))
+      if (totalRead == totalWritten) {
+        println("All good. :)")
+      } else {
+        println("*** counts did not match")
+      }
     }
 
     queue.close()

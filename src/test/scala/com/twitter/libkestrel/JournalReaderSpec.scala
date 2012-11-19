@@ -25,6 +25,9 @@ import org.scalatest.{AbstractSuite, FunSpec, Suite}
 import org.scalatest.matchers.{Matcher, MatchResult, ShouldMatchers}
 
 class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers with TempFolder with TestLogging {
+
+  implicit def stringToBuffer(s: String): ByteBuffer = ByteBuffer.wrap(s.getBytes)
+
   def makeJournal(name: String, maxFileSize: StorageUnit): Journal =
     new Journal(testFolder, name, maxFileSize, null, Duration.MaxValue, None)
 
@@ -32,26 +35,22 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
 
   def makeFiles() {
     val jf1 = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-    jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
-    jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
+    jf1.put(QueueItem(100L, Time.now, None, "100"))
+    jf1.put(QueueItem(101L, Time.now, None, "101"))
     jf1.close()
 
     val jf2 = JournalFile.create(new File(testFolder, "test.2"), null, Duration.MaxValue, 16.kilobytes)
-    jf2.put(QueueItem(102L, Time.now, None, ByteBuffer.wrap("102".getBytes)))
-    jf2.put(QueueItem(103L, Time.now, None, ByteBuffer.wrap("103".getBytes)))
+    jf2.put(QueueItem(102L, Time.now, None, "102"))
+    jf2.put(QueueItem(103L, Time.now, None, "103"))
     jf2.close()
 
     val jf3 = JournalFile.create(new File(testFolder, "test.3"), null, Duration.MaxValue, 16.kilobytes)
-    jf3.put(QueueItem(104L, Time.now, None, ByteBuffer.wrap("104".getBytes)))
-    jf3.put(QueueItem(105L, Time.now, None, ByteBuffer.wrap("105".getBytes)))
+    jf3.put(QueueItem(104L, Time.now, None, "104"))
+    jf3.put(QueueItem(105L, Time.now, None, "105"))
     jf3.close()
   }
 
-  def bufferToString(b: ByteBuffer) = {
-    val bytes = new Array[Byte](b.remaining)
-    b.get(bytes)
-    new String(bytes)
-  }
+  def queueItem(id: Long) = QueueItem(id, Time.now, None, "blah")
 
   describe("Journal#Reader") {
     it("created with a checkpoint file") {
@@ -67,8 +66,8 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
       val j = makeJournal("test")
       val reader = new j.Reader("1", file)
       reader.head = 123L
-      reader.commit(125L)
-      reader.commit(130L)
+      reader.commit(queueItem(125L))
+      reader.commit(queueItem(130L))
       reader.checkpoint()
 
       assert(BookmarkFile.open(file).toList === List(
@@ -87,15 +86,16 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
       bf.close()
 
       val jf = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-      jf.put(QueueItem(890L, Time.now, None, ByteBuffer.wrap("hi".getBytes)))
-      jf.put(QueueItem(910L, Time.now, None, ByteBuffer.wrap("hi".getBytes)))
+      jf.put(queueItem(890L))
+      jf.put(queueItem(910L))
       jf.close()
 
       val j = makeJournal("test")
       val reader = new j.Reader("1", file)
-      reader.readState()
+      reader.open()
       assert(reader.head === 900L)
       assert(reader.doneSet.toList.sorted === List(902L, 903L))
+      reader.close()
       j.close()
     }
 
@@ -105,22 +105,22 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
       val reader = new j.Reader("1", file)
       reader.head = 123L
 
-      reader.commit(124L)
+      reader.commit(queueItem(124L))
       assert(reader.head === 124L)
       assert(reader.doneSet.toList.sorted === List())
 
-      reader.commit(126L)
-      reader.commit(127L)
-      reader.commit(129L)
+      reader.commit(queueItem(126L))
+      reader.commit(queueItem(127L))
+      reader.commit(queueItem(129L))
       assert(reader.head === 124L)
       assert(reader.doneSet.toList.sorted === List(126L, 127L, 129L))
 
-      reader.commit(125L)
+      reader.commit(queueItem(125L))
       assert(reader.head === 127L)
       assert(reader.doneSet.toList.sorted === List(129L))
 
-      reader.commit(130L)
-      reader.commit(128L)
+      reader.commit(queueItem(130L))
+      reader.commit(queueItem(128L))
       assert(reader.head === 130L)
       assert(reader.doneSet.toList.sorted === List())
 
@@ -129,10 +129,11 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
 
     it("flush all items") {
       val j = makeJournal("test")
-      val (item1, future1) = j.put(ByteBuffer.wrap("hi".getBytes), Time.now, None)()
+      val (item1, future1) = j.put(ByteBuffer.wrap("hi".getBytes), Time.now, None)
       val reader = j.reader("1")
-      reader.commit(item1.id)
-      val (item2, future2) = j.put(ByteBuffer.wrap("bye".getBytes), Time.now, None)()
+      reader.open()
+      reader.commit(item1)
+      val (item2, future2) = j.put(ByteBuffer.wrap("bye".getBytes), Time.now, None)
 
       assert(reader.head === item1.id)
       reader.flush()
@@ -141,92 +142,94 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
       j.close()
     }
 
-    describe("read-behind") {
-      it("start") {
-        val jf = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-        jf.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
-        jf.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
-        jf.close()
+    describe("file boundaries") {
+      def createJournalFiles(journalName: String, startId: Long, idsPerFile: Int, files: Int, head: Long) {
+        for (fileNum <- 1 to files) {
+          val name = "%s.%d".format(journalName, fileNum)
+          val jf = JournalFile.create(new File(testFolder, name), null, Duration.MaxValue, 16.kilobytes)
+          for(idNum <- 1 to idsPerFile) {
+            val id = startId + ((fileNum - 1) * idsPerFile) + (idNum - 1)
+            jf.put(QueueItem(id, Time.now, None, ByteBuffer.wrap(id.toString.getBytes)))
+          }
+          jf.close()
+        }
 
+        val name = "%s.read.client".format(journalName)
+        val bf = BookmarkFile.create(new File(testFolder, name))
+        bf.readHead(head)
+        bf.close()
+      }
+
+      it("should start at a file edge") {
+        createJournalFiles("test", 100L, 2, 2, 101L)
         val j = makeJournal("test")
-        val reader = j.reader("client1")
-        reader.head = 100L
-        assert(!reader.inReadBehind)
-        reader.startReadBehind(100L)
-        assert(reader.inReadBehind)
-        val item = reader.nextReadBehind()
-        assert(item.map { _.id } === Some(101L))
-        assert(bufferToString(item.get.data) === "101")
+        val reader = j.reader("client")
+        reader.open()
 
-        reader.endReadBehind()
-        assert(!reader.inReadBehind)
+        assert(reader.next().map { _.id } === Some(102L))
 
         j.close()
       }
 
-      it("start at file edge") {
-        val jf1 = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-        jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
-        jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
-        jf1.close()
-
-        val jf2 = JournalFile.create(new File(testFolder, "test.2"), null, Duration.MaxValue, 16.kilobytes)
-        jf2.put(QueueItem(102L, Time.now, None, ByteBuffer.wrap("102".getBytes)))
-        jf2.put(QueueItem(103L, Time.now, None, ByteBuffer.wrap("103".getBytes)))
-        jf2.close()
-
+      it("should cross files") {
+        createJournalFiles("test", 100L, 2, 2, 100L)
         val j = makeJournal("test")
         val reader = j.reader("client")
-        reader.head = 101L
-        reader.startReadBehind(101L)
-        assert(reader.nextReadBehind().map { _.id } === Some(102L))
+        reader.open()
+
+        assert(reader.next().map { _.id } === Some(101L))
+        assert(reader.next().map { _.id } === Some(102L))
 
         j.close()
       }
 
-      describe("across journal files") {
-        it("when asked to") {
-          makeFiles()
-          val j = makeJournal("test")
-          val reader = j.reader("client")
-          reader.head = 102L
-          reader.startReadBehind(102L)
-          assert(reader.nextReadBehind().map { _.id } === Some(103L))
-
-          val item = reader.nextReadBehind()
-          assert(item.map { _.id } === Some(104L))
-          assert(bufferToString(item.get.data) === "104")
-          j.close()
-        }
-
-        it("when asked not to") {
-          makeFiles()
-          val j = makeJournal("test")
-          val reader = j.reader("client")
-          reader.head = 102L
-          val scanner = new reader.Scanner(102L, followFiles = false)
-          assert(scanner.next().map { _.id } === Some(103L))
-          assert(scanner.next() === None)
-          j.close()
-        }
-      }
-
-      it("until it catches up") {
-        val jf1 = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-        jf1.put(QueueItem(100L, Time.now, None, ByteBuffer.wrap("100".getBytes)))
-        jf1.put(QueueItem(101L, Time.now, None, ByteBuffer.wrap("101".getBytes)))
-        jf1.close()
-
+      it("should peek at leading file edge") {
+        createJournalFiles("test", 100L, 2, 2, 101L)
         val j = makeJournal("test")
         val reader = j.reader("client")
-        reader.head = 100L
-        reader.startReadBehind(100L)
+        reader.open()
 
-        assert(reader.inReadBehind === true)
-        assert(reader.nextReadBehind().map { _.id } === Some(101L))
-        assert(reader.inReadBehind === true)
-        assert(reader.nextReadBehind().map { _.id } === None)
-        assert(reader.inReadBehind === false)
+        assert(reader.peekOldest().map { _.id } === Some(102L))
+        assert(reader.peekOldest().map { _.id } === Some(102L))
+
+        j.close()
+      }
+
+      it("should peek at trailing file edge") {
+        createJournalFiles("test", 100L, 2, 2, 100L)
+        val j = makeJournal("test")
+        val reader = j.reader("client")
+        reader.open()
+
+        assert(reader.peekOldest().map { _.id } === Some(101L))
+        assert(reader.peekOldest().map { _.id } === Some(101L))
+
+        j.close()
+      }
+
+      it("should conditionally get at leading file edge") {
+        createJournalFiles("test", 100L, 2, 2, 101L)
+        val j = makeJournal("test")
+        val reader = j.reader("client")
+        reader.open()
+
+        assert(reader.nextIf { _ => false } === None)
+        assert(reader.nextIf { _ => true }.map { _.id } === Some(102L))
+        assert(reader.nextIf { _ => true }.map { _.id } === Some(103L))
+
+        j.close()
+      }
+
+      it("should conditionally get at trailing file edge") {
+        createJournalFiles("test", 100L, 2, 2, 100L)
+        val j = makeJournal("test")
+        val reader = j.reader("client")
+        reader.open()
+
+        assert(reader.nextIf { _ => false } === None)
+        assert(reader.nextIf { _ => true }.map { _.id } === Some(101L))
+        assert(reader.nextIf { _ => true }.map { _.id } === Some(102L))
+
         j.close()
       }
     }
@@ -236,13 +239,12 @@ class JournalReaderSpec extends FunSpec with ResourceCheckingSuite with ShouldMa
       val j = makeJournal("test")
       val reader = j.reader("client")
       reader.head = 100L
-      reader.startReadBehind(100L)
+
       assert(j.fileInfosAfter(101L).toList === List(
         FileInfo(new File(testFolder, "test.2"), 102L, 103L, 2, 6),
         FileInfo(new File(testFolder, "test.3"), 104L, 105L, 2, 6)
       ))
       j.close()
     }
-
   }
 }

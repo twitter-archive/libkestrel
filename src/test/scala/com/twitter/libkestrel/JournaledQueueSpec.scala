@@ -32,12 +32,13 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
   val config = new JournaledQueueConfig(name = "test")
   def makeReaderConfig() = new JournaledQueueReaderConfig()
 
-  val timer = new JavaTimer(isDaemon = true)
+  def makeTimer(): Timer = new JavaTimer(isDaemon = true)
   val scheduler = new ScheduledThreadPoolExecutor(1)
 
   def makeQueue(
     config: JournaledQueueConfig = config,
-    readerConfig: JournaledQueueReaderConfig = makeReaderConfig()
+    readerConfig: JournaledQueueReaderConfig = makeReaderConfig(),
+    timer: Timer = makeTimer()
   ) = {
     new JournaledQueue(config.copy(defaultReaderConfig = readerConfig), testFolder, timer, scheduler)
   }
@@ -159,8 +160,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
       val reader = q.reader("")
       assert(reader.items === 0)
       assert(reader.bytes === 0)
-      assert(reader.memoryItems === 0)
-      assert(reader.memoryBytes === 0)
       reader.close()
       q.close()
     }
@@ -174,8 +173,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
         assert(reader.items === 5)
         assert(reader.bytes === 5 * 1024)
-        assert(reader.memoryItems === 5)
-        assert(reader.memoryBytes === 5 * 1024)
         val item = reader.get(None)()
         assert(item.isDefined)
         item.get.data should haveId(4L)
@@ -184,18 +181,15 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         q.close()
       }
 
-      it("in read-behind") {
+      it("in the middle") {
         setupWriteJournals(4, 2)
         (0L to 4L).foreach { readId =>
           setupBookmarkFile("", readId)
-          val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
-          val q = makeQueue(readerConfig = readerConfig)
+          val q = makeQueue()
           val reader = q.reader("")
 
           assert(reader.items === 8 - readId)
           assert(reader.bytes === (8 - readId) * 1024)
-          assert(reader.memoryItems === 4)
-          assert(reader.memoryBytes === 4 * 1024)
           reader.close()
           q.close()
         }
@@ -209,32 +203,25 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
         assert(reader.items === 0)
         assert(reader.bytes === 0L)
-        assert(reader.memoryItems === 0)
-        assert(reader.memoryBytes === 0L)
         assert(reader.get(None)() == None)
         q.close()
       }
     }
 
-    it("moves into and then out of read-behind") {
+    it("falls behind and catches up again") {
       setupWriteJournals(0, 0)
       setupBookmarkFile("", 0)
-      val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
-      val q = makeQueue(readerConfig = readerConfig)
+      val q = makeQueue(config = config.copy(journalSize = 4.kilobytes))
       val reader = q.reader("")
 
       assert(reader.items === 0)
       assert(reader.bytes === 0)
-      assert(reader.memoryItems === 0)
-      assert(reader.memoryBytes === 0)
 
       (1L to 50L).foreach { id =>
         q.put(makeId(id, 1024), Time.now, None)
 
         assert(reader.items === (id min 6))
         assert(reader.bytes === ((id min 6) * 1024))
-        assert(reader.memoryItems === (id min 4))
-        assert(reader.memoryBytes === ((id min 4) * 1024))
 
         if (id > 5) {
           val item = reader.get(None)()
@@ -246,8 +233,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
         assert(reader.items === (id min 5))
         assert(reader.bytes === ((id min 5) * 1024))
-        assert(reader.memoryItems === (id min 4))
-        assert(reader.memoryBytes === ((id min 4) * 1024))
       }
 
       (1L to 5L).foreach { id =>
@@ -259,49 +244,8 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
         assert(reader.items === 5 - id)
         assert(reader.bytes === (5 - id) * 1024)
-        assert(reader.memoryItems === 5 - id)
-        assert(reader.memoryBytes === (5 - id) * 1024)
       }
 
-      q.close()
-    }
-
-    it("fills read-behind as items are removed") {
-      setupWriteJournals(4, 2)
-      setupBookmarkFile("", 0)
-      val readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes)
-      val q = makeQueue(readerConfig = readerConfig)
-      val reader = q.reader("")
-
-      assert(reader.items === 8)
-      assert(reader.bytes === 8 * 1024)
-      assert(reader.memoryItems === 4)
-      assert(reader.memoryBytes === 4 * 1024)
-
-      (1L to 8L).foreach { id =>
-        val item = reader.get(None)()
-        assert(item.isDefined)
-        item.get.data should haveId(id)
-        assert(item.get.id == id)
-
-        assert(reader.items === 8 - id + 1)
-        assert(reader.bytes === (8 - id + 1) * 1024)
-        assert(reader.memoryItems === ((8 - id + 1) min 4))
-        assert(reader.memoryBytes === ((8 - id + 1) min 4) * 1024)
-
-        reader.commit(item.get.id)
-
-        assert(reader.items === 8 - id)
-        assert(reader.bytes === (8 - id) * 1024)
-        assert(reader.memoryItems === ((8 - id) min 4))
-        assert(reader.memoryBytes === ((8 - id) min 4) * 1024)
-      }
-
-      assert(reader.get(None)() === None)
-      assert(reader.items === 0)
-      assert(reader.bytes === 0)
-      assert(reader.memoryItems === 0)
-      assert(reader.memoryBytes === 0)
       q.close()
     }
 
@@ -375,12 +319,15 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         val (q, reader) = setupTracking
 
         val item = reader.get(None)()
-        reader.get(None)()
-        reader.unget(item.get.id)
+        val originalId = item.get.id
+        assert(reader.get(None)() == None)
+        reader.unget(originalId)
 
         val itemAgain = reader.get(None)()
-        reader.commit(item.get.id)
+        val repeatId = item.get.id
+        reader.commit(repeatId)
 
+        assert(originalId == repeatId)
         assert(reader.openItems === 0)
         assert(reader.openedItemCount.get == 2L)
         assert(reader.canceledItemCount.get == 1L)
@@ -625,6 +572,7 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
           q.put(stringToBuffer("poof"), Time.now, None)
           assert(reader.items === 1)
           q.flush()
+          assert(reader.items === 0)
 
           (1 to 10).foreach { id =>
             q.put(stringToBuffer(id.toString), Time.now, Some(100.milliseconds.fromNow))
@@ -749,20 +697,20 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
         q.put(stringToBuffer("commie"), Time.now, None)
         q.put(stringToBuffer("spooky"), Time.now, None)
-        assert(reader.age === 0.milliseconds)
+        assert(reader.age.inMilliseconds === 0)
 
         timeMutator.advance(15.milliseconds)
-        assert(reader.age === 15.milliseconds)
+        assert(reader.age.inMilliseconds === 15)
 
         val item1 = reader.get(None)()
         assert(item1.isDefined)
         reader.commit(item1.get.id)
-        assert(reader.age === 15.milliseconds)
+        assert(reader.age.inMilliseconds === 15)
 
         val item2 = reader.get(None)()
         assert(item2.isDefined)
         reader.commit(item2.get.id)
-        assert(reader.age === 0.milliseconds)
+        assert(reader.age.inMilliseconds === 0)
         q.close()
       }
     }
@@ -782,41 +730,57 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         q.close()
 
         val q2 = makeQueue()
-        val reader2 = q.reader("")
+        val reader2 = q2.reader("")
         assert(reader2.items === 3)
         q2.close()
       }
 
       it("on timer") {
-        setupWriteJournals(4, 1)
-        setupBookmarkFile("", 0)
-        val q = makeQueue(config = config.copy(checkpointTimer = 5.milliseconds))
-        val reader = q.reader("")
+        Time.withCurrentTimeFrozen { timeMutator =>
+          setupWriteJournals(4, 1)
+          setupBookmarkFile("", 0)
 
-        assert(reader.items === 4)
-        assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
-          Record.ReadHead(0L),
-          Record.ReadDone(Array[Long]())
-        ))
+          val timer = new MockTimer {
+            override def schedule(when: Time, period: Duration)(f: => Unit): TimerTask = {
+              def go {
+                f
+                schedule(Time.now + period) { go }
+              }
+              schedule(when) {
+                go
+              }
+            }
+          }
+          val q = makeQueue(config = config.copy(checkpointTimer = 5.milliseconds), timer = timer)
+          val reader = q.reader("")
 
-        val item = reader.get(None)()
-        assert(item.isDefined)
-        reader.commit(item.get.id)
-        assert(reader.items === 3)
+          assert(reader.items === 4)
+          assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
+            Record.ReadHead(0L),
+            Record.ReadDone(Array[Long]())
+          ))
 
-        Thread.sleep(100)
+          val item = reader.get(None)()
+          assert(item.isDefined)
+          reader.commit(item.get.id)
+          assert(reader.items === 3)
 
-        assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
-          Record.ReadHead(1L),
-          Record.ReadDone(Array[Long]())
-        ))
-        q.close()
+          timeMutator.advance(100.milliseconds)
+          timer.tick()
+
+          assert(BookmarkFile.open(new File(testFolder, "test.read.")).toList === List(
+            Record.ReadHead(1L),
+            Record.ReadDone(Array[Long]())
+          ))
+          q.close()
+        }
       }
     }
 
     it("can configure two readers differently") {
       val q = makeQueue(config = config.copy(
-        readerConfigs = Map("small" -> new JournaledQueueReaderConfig(maxMemorySize = 1.kilobyte))
+        readerConfigs = Map("small" -> new JournaledQueueReaderConfig(maxSize = 1.kilobyte,
+                                                                      fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest))
       ))
       val reader1 = q.reader("big")
       val reader2 = q.reader("small")
@@ -824,8 +788,8 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
       (1 to 5).foreach { id =>
         q.put(makeId(id, 512), Time.now, None)
       }
-      assert(!reader1.inReadBehind)
-      assert(reader2.inReadBehind)
+      assert(reader1.items === 5)
+      assert(reader2.items === 2)
       q.close()
     }
 
@@ -861,30 +825,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         assert(reader.putCount.get === 2)
         assert(reader.putBytes.get === 12)
         assert(reader.discardedCount.get === 1)
-        q.close()
-      }
-
-      it("enters read-behind") {
-        val q = makeQueue(readerConfig = makeReaderConfig().copy(maxMemorySize = 4.kilobytes))
-        val reader = q.reader("")
-        (1 to 8).foreach { id =>
-          q.put(makeId(id, 1024), Time.now, None)
-          assert(reader.items === id)
-          assert(reader.bytes === 1024L * id)
-          assert(reader.memoryItems === (4 min id))
-          assert(reader.memoryBytes === (4096L min (id * 1024)))
-        }
-        (1 to 8).foreach { id =>
-          val item = reader.get(None)()
-          assert(item.isDefined)
-          item.get.data should haveId(id)
-          assert(item.get.id === id)
-          reader.commit(item.get.id)
-          assert(reader.items === (8 - id))
-          assert(reader.bytes === 1024L * (8 - id))
-          assert(reader.memoryItems === (4 min (8 - id)))
-          assert(reader.memoryBytes === (4096L min ((8 - id) * 1024)))
-        }
         q.close()
       }
 
@@ -927,27 +867,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
       }
     }
 
-    it("exists without a journal") {
-      val q = makeQueue(config = config.copy(journaled = false))
-      val reader = q.reader("")
-
-      q.put(stringToBuffer("first post"), Time.now, None)
-      q.put(stringToBuffer("laggy"), Time.now, None)
-      val item = reader.get(None)()
-      assert(item.isDefined)
-      assert(bufferToString(item.get.data) === "first post")
-      q.close()
-
-      assert(!new File(testFolder, "test.read.").exists)
-      assert(testFolder.list().size === 0)
-
-      val q2 = makeQueue(config = config.copy(journaled = false))
-      val reader2 = q.reader("")
-      val item2 = reader.get(None)()
-      assert(!item2.isDefined)
-      q2.close()
-    }
-
     it("erases journals when asked") {
       setupWriteJournals(4, 3)
       setupBookmarkFile("", 0)
@@ -963,7 +882,7 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
 
     describe("flushes items") {
       it("normally") {
-        val q = makeQueue(config = config.copy(journaled = false))
+        val q = makeQueue()
         val reader = q.reader("")
 
         (1 to 4).foreach { id =>
@@ -974,22 +893,6 @@ class JournaledQueueSpec extends FunSpec with ResourceCheckingSuite with ShouldM
         reader.flush()
         assert(reader.items === 0)
         assert(reader.flushCount.get === 1)
-        assert(!reader.get(None)().isDefined)
-        q.close()
-      }
-
-      it("from read-behind") {
-        val q = makeQueue(readerConfig = makeReaderConfig.copy(maxMemorySize = 1.kilobyte))
-        val reader = q.reader("")
-
-        (1 to 5).foreach { id =>
-          q.put(ByteBuffer.allocate(512), Time.now, None)
-        }
-        assert(reader.items === 5)
-        assert(reader.inReadBehind)
-        reader.flush()
-        assert(reader.items === 0)
-        assert(!reader.inReadBehind)
         assert(!reader.get(None)().isDefined)
         q.close()
       }

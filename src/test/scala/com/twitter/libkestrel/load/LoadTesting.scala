@@ -19,7 +19,7 @@ package load
 
 import com.twitter.logging.{ConsoleHandler, FileHandler, Formatter, Logger, Policy}
 import com.twitter.util.{JavaTimer, Timer}
-import java.io.File
+import java.io.{File, FilenameFilter}
 import java.nio.ByteBuffer
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import scopt.OptionParser
@@ -47,6 +47,7 @@ trait LoadTesting {
   var queueType: QueueType = QueueType.Concurrent
   var itemLimit = 10000
   var sleep = 0
+  var preClean = false
 
   class CommonOptionParser(name: String) extends OptionParser(name) {
     def common() {
@@ -58,6 +59,9 @@ trait LoadTesting {
       })
       opt("z", "sleep", "number of seconds to sleep before starting (for profiling) (default: %d)".format(sleep), { x: String =>
         sleep = x.toInt
+      })
+      opt("c", "clean", "delete any stale queue files ahead of starting the test (default off)", {
+        preClean = true
       })
     }
   }
@@ -71,13 +75,22 @@ trait LoadTesting {
         ConcurrentBlockingQueue[String](itemLimit, ConcurrentBlockingQueue.FullPolicy.DropOldest)
       }
       case QueueType.Journaled => {
+        val dir = new File("/tmp")
+        val queueName = "test"
+        if (preClean) {
+          dir.listFiles(new FilenameFilter {
+            val prefix = queueName + "."
+            def accept(dir: File, name: String) = name.startsWith(prefix)
+          }).foreach { _.delete() }
+        }
+
         new JournaledQueue(new JournaledQueueConfig(
-          name = "test",
+          name = queueName,
           defaultReaderConfig = new JournaledQueueReaderConfig(
             maxItems = itemLimit,
             fullPolicy = ConcurrentBlockingQueue.FullPolicy.DropOldest
           )
-        ), new File("/tmp"), javaTimer, scheduler).toBlockingQueue[String]
+        ), dir, javaTimer, scheduler).toBlockingQueue[String]
       }
     }
   }

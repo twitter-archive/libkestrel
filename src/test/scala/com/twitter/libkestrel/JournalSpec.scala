@@ -36,7 +36,9 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
     now
   }
 
-  def stringToBuffer(s: String) = ByteBuffer.wrap(s.getBytes)
+  def queueItem(id: Long) = QueueItem(id, Time.now, None, "blah")
+
+  implicit def stringToBuffer(s: String): ByteBuffer = ByteBuffer.wrap(s.getBytes)
 
   describe("Journal") {
     describe("#getQueueNamesFromFolder") {
@@ -195,13 +197,13 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
         bf.close()
       }
       val jf = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-      jf.put(QueueItem(100L, Time.now, None, stringToBuffer("hi")))
-      jf.put(QueueItem(105L, Time.now, None, stringToBuffer("hi")))
+      jf.put(QueueItem(100L, Time.now, None, "hi"))
+      jf.put(QueueItem(105L, Time.now, None, "hi"))
       jf.close()
 
       val j = makeJournal("test")
-      j.reader("client1").commit(101L)
-      j.reader("client2").commit(103L)
+      j.reader("client1").commit(queueItem(101L))
+      j.reader("client2").commit(queueItem(103L))
       j.checkpoint()
       j.close()
 
@@ -218,7 +220,7 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
 
     it("doesn't checkpoint readers that haven't changed") {
       val j = makeJournal("test")
-      j.reader("client1").commit(1L)
+      j.reader("client1").commit(queueItem(1L))
       j.reader("client1").checkpoint()
       assert(new File(testFolder, "test.read.client1").exists)
 
@@ -233,7 +235,7 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
       val j = makeJournal("test")
       var r = j.reader("new")
       r.head = 100L
-      r.commit(101L)
+      r.commit(queueItem(101L))
       r.checkpoint()
       j.close()
 
@@ -283,8 +285,8 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
       it("with a head id in the future") {
         // create main journal
         val jf1 = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-        jf1.put(QueueItem(390L, Time.now, None, stringToBuffer("hi")))
-        jf1.put(QueueItem(400L, Time.now, None, stringToBuffer("hi")))
+        jf1.put(QueueItem(390L, Time.now, None, "hi"))
+        jf1.put(QueueItem(400L, Time.now, None, "hi"))
         jf1.close()
 
         // create bookmarks with impossible ids
@@ -309,7 +311,7 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
 
       it("with a head id that doesn't exist anymore") {
         val jf1 = JournalFile.create(new File(testFolder, "test.1"), null, Duration.MaxValue, 16.kilobytes)
-        jf1.put(QueueItem(800L, Time.now, None, stringToBuffer("hi")))
+        jf1.put(QueueItem(800L, Time.now, None, "hi"))
         jf1.close()
         val bf = BookmarkFile.create(new File(testFolder, "test.read.1"))
         bf.readHead(600L)
@@ -327,14 +329,14 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
       Time.withCurrentTimeFrozen { timeMutator =>
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val j = makeJournal("test")
-        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
+        val (item, future) = j.put("hi", Time.now, None)
         assert(item.id === 1L)
         j.close()
 
         val file = new File(testFolder, "test." + Time.now.inMilliseconds)
         val jf = JournalFile.open(file)
         assert(jf.readNext() ===
-          Some(Record.Put(QueueItem(1L, roundedTime, None, stringToBuffer("hi")))))
+          Some(Record.Put(QueueItem(1L, roundedTime, None, "hi"))))
         jf.close()
       }
     }
@@ -344,23 +346,23 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
         val roundedTime = Time.fromMilliseconds(Time.now.inMilliseconds)
         val file1 = new File(testFolder, "test.1")
         val jf1 = JournalFile.create(file1, null, Duration.MaxValue, 16.kilobytes)
-        jf1.put(QueueItem(101L, Time.now, None, stringToBuffer("101")))
+        jf1.put(QueueItem(101L, Time.now, None, "101"))
         jf1.close()
         val file2 = new File(testFolder, "test.2")
         val jf2 = JournalFile.create(file2, null, Duration.MaxValue, 16.kilobytes)
-        jf2.put(QueueItem(102L, Time.now, None, stringToBuffer("102")))
+        jf2.put(QueueItem(102L, Time.now, None, "102"))
         jf2.close()
 
         val j = makeJournal("test")
-        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
+        val (item, future) = j.put("hi", Time.now, None)
         assert(item.id === 103L)
         j.close()
 
         val jf3 = JournalFile.open(file2)
         assert(jf3.readNext() ===
-          Some(Record.Put(QueueItem(102L, roundedTime, None, stringToBuffer("102")))))
+          Some(Record.Put(QueueItem(102L, roundedTime, None, "102"))))
         assert(jf3.readNext() ===
-          Some(Record.Put(QueueItem(103L, roundedTime, None, stringToBuffer("hi")))))
+          Some(Record.Put(QueueItem(103L, roundedTime, None, "hi"))))
         assert(jf3.readNext() === None)
         jf3.close()
       }
@@ -373,8 +375,8 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
         // write 2 valid entries, but truncate the last one to make it corrupted.
         val file = new File(testFolder, "test.1")
         val jf = JournalFile.create(file, null, Duration.MaxValue, 16.kilobytes)
-        jf.put(QueueItem(101L, Time.now, None, stringToBuffer("101")))
-        jf.put(QueueItem(102L, Time.now, None, stringToBuffer("102")))
+        jf.put(QueueItem(101L, Time.now, None, "101"))
+        jf.put(QueueItem(102L, Time.now, None, "102"))
         jf.close()
 
         val raf = new RandomAccessFile(file, "rw")
@@ -382,15 +384,15 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
         raf.close()
 
         val j = makeJournal("test")
-        val (item, future) = j.put(stringToBuffer("hi"), Time.now, None)()
+        val (item, future) = j.put("hi", Time.now, None)
         assert(item.id === 102L)
         j.close()
 
         val jf2 = JournalFile.open(file)
         assert(jf2.readNext() ===
-          Some(Record.Put(QueueItem(101L, roundedTime, None, stringToBuffer("101")))))
+          Some(Record.Put(QueueItem(101L, roundedTime, None, "101"))))
         assert(jf2.readNext() ===
-          Some(Record.Put(QueueItem(102L, roundedTime, None, stringToBuffer("hi")))))
+          Some(Record.Put(QueueItem(102L, roundedTime, None, "hi"))))
         assert(jf2.readNext() === None)
         jf2.close()
       }
@@ -441,8 +443,8 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
           assert(new File(testFolder, "test." + time1).exists)
           assert(new File(testFolder, "test." + time3).exists)
 
-          reader.commit(1L)
-          reader.commit(2L)
+          reader.commit(queueItem(1L))
+          reader.commit(queueItem(2L))
           j.checkpoint()
 
           assert(!new File(testFolder, "test." + time1).exists)
@@ -463,8 +465,8 @@ class JournalSpec extends FunSpec with ResourceCheckingSuite with ShouldMatchers
           timeMutator.advance(1.millisecond)
           val time2 = addItem(j, 512)
           timeMutator.advance(1.millisecond)
-          reader.commit(1L)
-          reader.commit(2L)
+          reader.commit(queueItem(1L))
+          reader.commit(queueItem(2L))
           reader.checkpoint()
 
           assert(new File(testFolder, "test." + time0).exists)

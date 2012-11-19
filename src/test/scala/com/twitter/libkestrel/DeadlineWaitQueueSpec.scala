@@ -17,7 +17,7 @@
 package com.twitter.libkestrel
 
 import com.twitter.conversions.time._
-import com.twitter.util.{MockTimer, Time, TimeControl}
+import com.twitter.util._
 import java.util.concurrent.atomic.AtomicInteger
 import org.scalatest.{BeforeAndAfter, FunSpec}
 
@@ -27,7 +27,7 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
     var timeouts = new AtomicInteger(0)
     var awakens = new AtomicInteger(0)
 
-    def newQueue() = new DeadlineWaitQueue(timer)
+    val deadlineWaitQueue = new DeadlineWaitQueue(timer)
 
     before {
       timeouts.set(0)
@@ -44,7 +44,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should invoke timeout function when deadline expires") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
 
         tc.advance(5.seconds)
@@ -61,7 +60,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should remove waiters after timeout") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(deadlineWaitQueue.size === 1)
         tc.advance(11.seconds)
@@ -70,9 +68,23 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
       }
     }
 
+    it("should not use the timer for infinite deadlines") {
+      val mockTimer = new Timer {
+        def schedule(when: Time)(f: => Unit): TimerTask = {
+          throw new UnsupportedOperationException
+        }
+        def schedule(when: Time, period: Duration)(f: => Unit): TimerTask = {
+          throw new UnsupportedOperationException
+        }
+        def stop() { }
+      }
+
+      val deadlineWaitQueue = new DeadlineWaitQueue(mockTimer)
+      deadlineWaitQueue.add(Forever, defaultAwakens, defaultTimeout)
+    }
+
     it("should invoke the awakens function when triggered") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
 
         tc.advance(5.seconds)
@@ -88,7 +100,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should remove waiters after trigger") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(deadlineWaitQueue.size === 1)
         deadlineWaitQueue.trigger
@@ -98,7 +109,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should awaken only a single waiter at a time") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(timeouts.get === 0)
@@ -120,7 +130,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should awaken all waiters when requested") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(timeouts.get === 0)
@@ -134,7 +143,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should remove waiters after triggering all") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(deadlineWaitQueue.size === 2)
@@ -145,7 +153,6 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should explicitly remove a waiter without awakening or timing out") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         val waiter = deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
         assert(deadlineWaitQueue.size === 1)
         assert(timeouts.get === 0)
@@ -159,9 +166,8 @@ class DeadlineWaitQueueSpec extends FunSpec with BeforeAndAfter {
 
     it("should evict waiters and cancel their timer tasks") {
       Time.withCurrentTimeFrozen { tc =>
-        val deadlineWaitQueue = newQueue()
         deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
-        deadlineWaitQueue.add(Before(10.seconds.fromNow), defaultAwakens, defaultTimeout)
+        deadlineWaitQueue.add(Forever, defaultAwakens, defaultTimeout)
         assert(deadlineWaitQueue.size === 2)
         assert(timeouts.get === 0)
         assert(awakens.get === 0)

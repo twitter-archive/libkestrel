@@ -28,13 +28,10 @@ import java.io.File
  * and enforce policy on maximum queue size and item expiration.
  *
  * @param maxItems Set a hard limit on the number of items this queue can hold. When the queue is
- *   full, `discardOldWhenFull` dictates the behavior when a client attempts to add another item.
+ *   full, `fullPolicy` dictates the behavior when a client attempts to add another item.
  * @param maxSize Set a hard limit on the number of bytes (of data in queued items) this queue can
- *   hold. When the queue is full, discardOldWhenFull dictates the behavior when a client attempts
+ *   hold. When the queue is full, `fullPolicy` dictates the behavior when a client attempts
  *   to add another item.
- * @param maxMemorySize Keep only this much of the queue in memory. The journal will be used to
- *   store backlogged items, and they'll be read back into memory as the queue is drained. This
- *   setting is a release valve to keep a backed-up queue from consuming all memory.
  * @param maxAge Expiration time for items on this queue. Any item that has been sitting on the
  *   queue longer than this duration will be discarded. Clients may also attach an expiration time
  *   when adding items to a queue, in which case the item expires at the earlier of the two
@@ -60,7 +57,6 @@ import java.io.File
 case class JournaledQueueReaderConfig(
   maxItems: Int = Int.MaxValue,
   maxSize: StorageUnit = Long.MaxValue.bytes,
-  maxMemorySize: StorageUnit = 128.megabytes,
   maxAge: Option[Duration] = None,
   fullPolicy: ConcurrentBlockingQueue.FullPolicy = ConcurrentBlockingQueue.FullPolicy.RefusePuts,
   processExpiredItem: (QueueItem) => Unit = { _ => },
@@ -71,9 +67,9 @@ case class JournaledQueueReaderConfig(
   timeoutLatency: (JournaledQueue#Reader, Duration) => Unit = { (_, _) => }
 ) {
   override def toString() = {
-    ("maxItems=%d maxSize=%s maxMemorySize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d " +
+    ("maxItems=%d maxSize=%s maxAge=%s fullPolicy=%s maxExpireSweep=%d " +
      "maxQueueAge=%s").format(
-      maxItems, maxSize, maxMemorySize, maxAge, fullPolicy, maxExpireSweep, maxQueueAge)
+      maxItems, maxSize, maxAge, fullPolicy, maxExpireSweep, maxQueueAge)
   }
 }
 
@@ -84,8 +80,6 @@ case class JournaledQueueReaderConfig(
  * @param name Name of the queue being configured.
  * @param maxItemSize Set a hard limit on the number of bytes a single queued item can contain. A
  *   put request for an item larger than this will be rejected.
- * @param journaled If false, don't keep a journal file for this queue. When libkestrel exits, any
- *   remaining contents in the queue will be lost.
  * @param journalSize Maximum size of an individual journal file before libkestrel moves to a new
  *   file. In the (normal) state where a queue is usually empty, this is the amount of disk space
  *   a queue should consume before moving to a new file and erasing the old one.
@@ -104,7 +98,6 @@ case class JournaledQueueReaderConfig(
 case class JournaledQueueConfig(
   name: String,
   maxItemSize: StorageUnit = Long.MaxValue.bytes,
-  journaled: Boolean = true,
   journalSize: StorageUnit = 16.megabytes,
   syncJournal: Duration = Duration.MaxValue,
   saveArchivedJournals: Option[File] = None,
@@ -114,9 +107,9 @@ case class JournaledQueueConfig(
   defaultReaderConfig: JournaledQueueReaderConfig = new JournaledQueueReaderConfig()
 ) {
   override def toString() = {
-    ("name=%s maxItemSize=%s journaled=%s journalSize=%s syncJournal=%s " +
+    ("name=%s maxItemSize=%s journalSize=%s syncJournal=%s " +
      "saveArchivedJournals=%s checkpointTimer=%s").format(
-      name, maxItemSize, journaled, journalSize, syncJournal, saveArchivedJournals,
+      name, maxItemSize, journalSize, syncJournal, saveArchivedJournals,
       checkpointTimer)
   }
 

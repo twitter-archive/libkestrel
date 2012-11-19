@@ -16,7 +16,7 @@ object SimpleBlockingQueue {
 }
 
 /**
- * Simple reproduction of the queue from kestrel 2.1.
+ * Simple reproduction of the queue from kestrel 2.x.
  *
  * Puts and gets are done within synchronized blocks, and a DeadlineWaitQueue is used to arbitrate
  * timeouts and handoffs.
@@ -112,73 +112,5 @@ final class SimpleBlockingQueue[A <: AnyRef](
 
   def evictWaiters() {
     waiters.evictAll()
-  }
-}
-
-/**
- * A wait queue where each item has a timeout.
- * On each `trigger()`, one waiter is awoken (the awaken function is called). If the timeout is
- * triggered by the Timer, the timeout function will be called instead. The queue promises that
- * exactly one of the functions will be called, never both.
- */
-final class DeadlineWaitQueue(timer: Timer) {
-  case class Waiter(var timerTask: Option[TimerTask], awaken: () => Unit, timeout: () => Unit)
-  private val queue = new LinkedHashSet[Waiter].asScala
-
-  def add(deadline: Deadline, awaken: () => Unit, timeout: () => Unit) = {
-    val waiter = Waiter(None, awaken, timeout)
-    deadline match {
-      case Before(time) =>
-        val timerTask = timer.schedule(time) {
-          if (synchronized { queue.remove(waiter) }) waiter.timeout()
-        }
-        waiter.timerTask = Some(timerTask)
-      case Forever => ()
-    }
-    synchronized { queue.add(waiter) }
-    waiter
-  }
-
-  def trigger() {
-    synchronized {
-      queue.headOption.map { waiter =>
-        queue.remove(waiter)
-        waiter
-      }
-    }.foreach { waiter =>
-      waiter.timerTask.foreach { _.cancel() }
-      waiter.awaken()
-    }
-  }
-
-  def triggerAll() {
-    synchronized {
-      val rv = queue.toArray
-      queue.clear()
-      rv
-    }.foreach { waiter =>
-      waiter.timerTask.foreach { _.cancel() }
-      waiter.awaken()
-    }
-  }
-
-  def evictAll() {
-    synchronized {
-      val rv = queue.toArray
-      queue.clear()
-      rv
-    }.foreach { waiter =>
-      waiter.timerTask.foreach { _.cancel() }
-      waiter.timeout()
-    }
-  }
-
-  def remove(waiter: Waiter) {
-    synchronized { queue.remove(waiter) }
-    waiter.timerTask.foreach { _.cancel() }
-  }
-
-  def size = {
-    synchronized { queue.size }
   }
 }

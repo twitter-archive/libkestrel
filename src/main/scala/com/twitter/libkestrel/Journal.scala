@@ -16,13 +16,13 @@
 
 package com.twitter.libkestrel
 
-import com.twitter.concurrent.Serialized
 import com.twitter.conversions.storage._
 import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileOutputStream, IOException}
 import java.nio.ByteBuffer
-import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.{ConcurrentLinkedDeque, ScheduledExecutorService}
+import java.util.concurrent.atomic.{AtomicInteger,AtomicLong}
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
@@ -59,6 +59,8 @@ object Journal {
       new Journal(queuePath, queueName, maxFileSize, scheduler, syncJournal, saveArchivedJournals)
     }
   }
+
+  private[libkestrel] val NoCondition = (_: QueueItem) => true
 }
 
 /**
@@ -74,8 +76,13 @@ class Journal(
   scheduler: ScheduledExecutorService,
   syncJournal: Duration,
   saveArchivedJournals: Option[File]
-) extends Serialized {
+) extends ReadWriteLock {
   private[this] val log = Logger.get(getClass)
+
+  // NOTE ON LOCKING:
+  // - take the write lock to modify the journal or data structures related to writing the journal
+  // - take the read lock to read the journal or data structures shared by the Journal and its
+  //   Reader(s)
 
   val prefix = new File(queuePath, queueName)
 
@@ -172,10 +179,9 @@ class Journal(
 
   // find the earliest possible head id
   private[this] def earliestHead = {
-    if (idMap.size == 0) {
-      0L
-    } else {
-      idMap.head match { case (id, file) => id }
+    idMap.headOption match {
+      case Some((id, file)) => id
+      case None => 0L
     }
   }
 
@@ -235,22 +241,22 @@ class Journal(
   }
 
   private[this] def openJournal() {
-    if (idMap.size > 0) {
-      val (id, fileInfo) = idMap.last
-      try {
-        _journalFile = JournalFile.append(fileInfo.file, scheduler, syncJournal, maxFileSize)
-        _tailId = fileInfo.tailId
-        currentItems = fileInfo.items
-        currentBytes = fileInfo.bytes
-      } catch {
-        case e: IOException => {
-          log.error("Unable to open journal %s; aborting!", fileInfo.file)
-          throw e
+    idMap.lastOption match {
+      case Some((id, fileInfo)) =>
+        try {
+          _journalFile = JournalFile.append(fileInfo.file, scheduler, syncJournal, maxFileSize)
+          _tailId = fileInfo.tailId
+          currentItems = fileInfo.items
+          currentBytes = fileInfo.bytes
+        } catch {
+          case e: IOException => {
+            log.error("Unable to open journal %s; aborting!", fileInfo.file)
+            throw e
+          }
         }
-      }
-    } else {
-      log.info("No transaction journal for '%s'; starting with empty queue.", queueName)
-      rotate()
+      case None =>
+        log.info("No transaction journal for '%s'; starting with empty queue.", queueName)
+        rotate()
     }
   }
 
@@ -267,45 +273,50 @@ class Journal(
   private[this] def checkOldFiles() {
     val minHead = readerMap.values.foldLeft(tail) { (n, r) => n min (r.head + 1) }
     // all the files that start off with unreferenced ids, minus the last. :)
-    idMap.takeWhile { case (id, fileInfo) => id <= minHead }.dropRight(1).foreach { case (id, fileInfo) =>
-      log.info("Erasing unused journal file for '%s': %s", queueName, fileInfo.file)
-      idMap = idMap - id
-      if (saveArchivedJournals.isDefined) {
-        val archiveFile = new File(saveArchivedJournals.get, "archive~" + fileInfo.file.getName)
-        fileInfo.file.renameTo(archiveFile)
-      } else {
-        fileInfo.file.delete()
+    withWriteLock {
+      idMap.takeWhile { case (id, fileInfo) => id <= minHead }.dropRight(1).foreach { case (id, fileInfo) =>
+        log.info("Erasing unused journal file for '%s': %s", queueName, fileInfo.file)
+        idMap = idMap - id
+        if (saveArchivedJournals.isDefined) {
+          val archiveFile = new File(saveArchivedJournals.get, "archive~" + fileInfo.file.getName)
+          fileInfo.file.renameTo(archiveFile)
+        } else {
+          fileInfo.file.delete()
+        }
       }
     }
   }
 
   private[this] def rotate() {
-    if (_journalFile ne null) {
-      // fix up id map to have the new item/byte count
-      idMap.last match { case (id, info) =>
-        idMap += (id -> FileInfo(_journalFile.file, id, _tailId, currentItems, currentBytes))
+    withWriteLock {
+      if (_journalFile ne null) {
+        // fix up id map to have the new item/byte count
+        idMap.last match { case (id, info) =>
+          idMap += (id -> FileInfo(_journalFile.file, id, _tailId, currentItems, currentBytes))
+        }
       }
+      // open new file
+      var newFile = uniqueFile(new File(queuePath, queueName + "."))
+      val oldJournalFile = _journalFile
+      _journalFile = JournalFile.create(newFile, scheduler, syncJournal, maxFileSize)
+      if (oldJournalFile eq null) {
+        log.info("Rotating %s to %s", queueName, newFile)
+      } else {
+        log.info("Rotating %s from %s (%s) to %s", queueName, oldJournalFile.file,
+          oldJournalFile.position.bytes.toHuman, newFile)
+        oldJournalFile.close()
+      }
+      currentItems = 0
+      currentBytes = 0
+      idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
+      checkOldFiles()
     }
-    // open new file
-    var newFile = uniqueFile(new File(queuePath, queueName + "."))
-    if (_journalFile eq null) {
-      log.info("Rotating %s to %s", queueName, newFile)
-    } else {
-      log.info("Rotating %s from %s (%s) to %s", queueName, _journalFile.file,
-        _journalFile.position.bytes.toHuman, newFile)
-      _journalFile.close()
-    }
-    _journalFile = JournalFile.create(newFile, scheduler, syncJournal, maxFileSize)
-    currentItems = 0
-    currentBytes = 0
-    idMap += (_tailId + 1 -> FileInfo(newFile, _tailId + 1, 0, 0, 0L))
-    checkOldFiles()
   }
 
   def reader(name: String): Reader = {
     readerMap.get(name).getOrElse {
       // grab a lock so only one thread does this potentially slow thing at once
-      synchronized {
+      withWriteLock {
         readerMap.get(name).getOrElse {
           val file = new File(queuePath, queueName + ".read." + name)
           val reader = readerMap.get("") match {
@@ -314,8 +325,7 @@ class Journal(
               val oldFile = r.file
               r.file = file
               r.name = name
-              r.commit(0L)
-              r.checkpoint()
+              r.forceCheckpoint()
               oldFile.delete()
               readerMap = readerMap - ""
               r
@@ -336,7 +346,7 @@ class Journal(
 
   // rare operation: destroy a reader.
   def dropReader(name: String) {
-    synchronized {
+    withWriteLock {
       readerMap.get(name) foreach { reader =>
         readerMap -= name
         reader.file.delete()
@@ -346,47 +356,50 @@ class Journal(
   }
 
   def journalSize: Long = {
-    val files = writerFiles()
+    val (files, position) = withReadLock { (writerFiles(), _journalFile.position) }
     val fileSizes = files.foldLeft(0L) { (sum, file) => sum + file.length() }
-    fileSizes - files.last.length() + _journalFile.position
+    fileSizes - files.last.length() + position
   }
 
-  def tail = _tailId
+  def tail = withReadLock { _tailId }
 
   def close() {
-    readerMap.values.foreach { reader =>
-      reader.checkpoint()
-      reader.close()
+    withWriteLock {
+      readerMap.values.foreach { reader =>
+        reader.checkpoint()
+        reader.close()
+      }
+      readerMap = immutable.Map.empty[String, Reader]
+      _journalFile.close()
     }
-    readerMap = immutable.Map.empty[String, Reader]
-    _journalFile.close()
   }
 
   /**
    * Get rid of all journal files for this queue.
    */
   def erase() {
-    close()
-    readerFiles().foreach { _.delete() }
-    writerFiles().foreach { _.delete() }
-    removeTemporaryFiles()
+    withWriteLock {
+      close()
+      readerFiles().foreach { _.delete() }
+      writerFiles().foreach { _.delete() }
+      removeTemporaryFiles()
+    }
   }
 
-  def checkpoint(): Future[Unit] = {
-    val futures = readerMap.map { case (name, reader) =>
+  def checkpoint() {
+    val readers = withReadLock { readerMap.toList }
+    readers.foreach { case (_, reader) =>
       reader.checkpoint()
     }
-    serialized {
+    withWriteLock {
       checkOldFiles()
     }
-    Future.join(futures.toSeq)
   }
 
   def put(
-    data: ByteBuffer, addTime: Time, expireTime: Option[Time], errorCount: Int = 0,
-    f: QueueItem => Unit = { _ => () }
-  ): Future[(QueueItem, Future[Unit])] = {
-    serialized {
+    data: ByteBuffer, addTime: Time, expireTime: Option[Time],
+    errorCount: Int = 0): (QueueItem, Future[Unit]) = {
+    val (item, future) = withWriteLock {
       val id = _tailId + 1
       val item = QueueItem(id, addTime, expireTime, data, errorCount)
       if (_journalFile.position + _journalFile.storageSizeOf(item) > maxFileSize.inBytes) rotate()
@@ -395,10 +408,18 @@ class Journal(
       val future = _journalFile.put(item)
       currentItems += 1
       currentBytes += data.remaining
-      // give the caller a chance to run some other code serialized:
-      f(item)
+
+      readerMap.values.foreach { reader =>
+        reader.itemCount.getAndIncrement()
+        reader.byteCount.getAndAdd(item.dataSize)
+        reader.putCount.getAndIncrement()
+        reader.putBytes.getAndAdd(item.dataSize)
+      }
+
       (item, future)
     }
+
+    (item, future)
   }
 
   /**
@@ -407,17 +428,28 @@ class Journal(
    * have been read out of order, usually because they refer to transactional reads that were
    * confirmed out of order.
    */
-  case class Reader(_name: String, _file: File) extends Serialized {
-    @volatile var file: File = _file
-    @volatile var name: String = _name
+  class Reader(@volatile var name: String, @volatile var file: File) {
     @volatile var haveReadState: Boolean = false
     @volatile private[this] var dirty = true
 
-    private[this] var _head = 0L
-    private[this] val _doneSet = new mutable.HashSet[Long]
-    private[this] var readBehind: Option[Scanner] = None
+    // NOTE ON LOCKING: withReadLock takes the Journal's read lock. Use synchronization to
+    // protect the Reader's data from concurrent modification by multiple callers on THIS reader
+    // instance.
 
-    def readState() {
+    private[this] var journalFile: JournalFileReader = _
+    private[this] var _head = 0L
+    private[this] var _next = 0L
+    private[this] val _doneSet = new mutable.HashSet[Long]
+
+    val itemCount = new AtomicInteger(0)
+    val byteCount = new AtomicLong(0)
+
+    val putCount = new AtomicInteger(0)
+    val putBytes = new AtomicLong(0)
+
+    private val rejectedQueue = new ConcurrentLinkedDeque[QueueItem]()
+
+    private[libkestrel] def readState() {
       val bookmarkFile = BookmarkFile.open(file)
       try {
         bookmarkFile.foreach { entry =>
@@ -436,34 +468,166 @@ class Journal(
       log.debug("Read checkpoint %s+%s: head=%s done=(%s)", queueName, name, _head, _doneSet.toSeq.sorted.mkString(","))
     }
 
+    private[this] def withReadLock[A](f: => A) = Journal.this.withReadLock(f)
+
+    def open() {
+      synchronized {
+        withReadLock {
+          close()
+          readState()
+
+          val fileInfo = fileInfoForId(_head).getOrElse { idMap(earliestHead) }
+          log.info("Reader %s+%s starting on: %s", queueName, name, fileInfo.file)
+          val jf = JournalFile.open(fileInfo.file)
+          var initialItems = 0
+          var initialBytes = 0L
+          if (_head >= earliestHead) {
+            var lastId = -1L
+            var readItems = 0
+            var readBytes = 0L
+            while (lastId < _head) {
+              jf.readNext() match {
+                case None => lastId = _head + 1 // end of last file
+                case Some(Record.Put(QueueItem(id, _, _, data, _))) =>
+                  lastId = id
+                  readItems += 1
+                  readBytes += data.remaining
+                case _ => ()
+              }
+            }
+            initialItems = fileInfo.items - readItems
+            initialBytes = fileInfo.bytes - readBytes
+          }
+          val afterFiles = fileInfosAfter(_head + 1)
+          itemCount.set(afterFiles.foldLeft(initialItems) { case (items, fileInfo) =>
+            items + fileInfo.items })
+          byteCount.set(afterFiles.foldLeft(initialBytes) { case (bytes, fileInfo) =>
+            bytes + fileInfo.bytes })
+          _next = _head + 1
+          journalFile = jf
+        }
+      }
+    }
+
+    private[this] def nextFile(): Boolean = {
+      val fileInfoCandidate = withReadLock { fileInfoForId(_next) }
+      fileInfoCandidate match {
+        case Some(fileInfo) if (fileInfo.file != journalFile.file) =>
+            journalFile.close()
+            journalFile = null
+            log.info("Reader %s+%s moving to: %s", queueName, name, fileInfo.file)
+            journalFile = JournalFile.open(fileInfo.file)
+            true
+          case _ =>
+            false
+      }
+    }
+
+    @tailrec
+    private[this] def next(peek: Boolean, cond: QueueItem => Boolean): Option[QueueItem] = {
+      val retryItem = Option(rejectedQueue.poll()).flatMap { item =>
+        if (peek) {
+          val result = Some(item.copy(data = item.data.duplicate()))
+          rejectedQueue.addFirst(item)
+          result
+        } else if (cond(item)) {
+          Some(item)
+        } else {
+          rejectedQueue.addFirst(item)
+          None
+        }
+      }
+      if (retryItem.isDefined) return retryItem
+
+      synchronized {
+        if (withReadLock { _next > tail }) {
+          return None
+        }
+
+        val mark = journalFile.position
+        journalFile.readNext() match {
+          case Some(Record.Put(item)) if peek =>
+            val newItem = item.copy(data = item.data.duplicate())
+            journalFile.rewind(mark)
+            return Some(newItem)
+          case Some(Record.Put(item)) =>
+            if (cond(item)) {
+              _next = item.id + 1
+              return Some(item)
+            } else {
+              journalFile.rewind(mark)
+              return None
+            }
+          case None =>
+            if (!nextFile()) {
+              return None
+            }
+          case _ => ()
+        }
+      }
+
+      next(peek, cond)
+    }
+
+    def next(): Option[QueueItem] = {
+      next(false, Journal.NoCondition)
+    }
+
+    def nextIf(f: QueueItem => Boolean): Option[QueueItem] = {
+      next(false, f)
+    }
+
+    final def peekOldest(): Option[QueueItem] = {
+      next(true, Journal.NoCondition)
+    }
+
+    /**
+     * Test if this reader is caught up with the writer.
+     */
+    def isCaughtUp = synchronized { withReadLock { _next > tail } }
+
     /**
      * To avoid a race while setting up a new reader, call this after initialization to reset the
      * head of the queue.
      */
     def catchUp() {
-      if (!haveReadState) head = _tailId
-      dirty = true
+      synchronized {
+        withReadLock {
+          if (!haveReadState) head = _tailId
+          dirty = true
+        }
+      }
     }
 
     /**
      * Rewrite the reader file with the current head and out-of-order committed reads.
      */
-    def checkpoint(): Future[Unit] = {
-      // FIXME really this should go in another thread. doesn't need to happen inline.
-      serialized {
-        if (dirty) {
-          dirty = false
-          val head = _head
-          val doneSet = _doneSet
-          log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, doneSet.toSeq.sorted.mkString(","))
-          val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
-          val newBookmarkFile = BookmarkFile.create(newFile)
-          newBookmarkFile.readHead(head)
-          newBookmarkFile.readDone(doneSet.toSeq.sorted)
-          newBookmarkFile.close()
-          newFile.renameTo(file)
+    def checkpoint() {
+      val checkpointData =
+        synchronized {
+          if (dirty) {
+            dirty = false
+            Some(_head, _doneSet.toSeq)
+          } else {
+            None
+          }
         }
+
+      checkpointData.foreach { case (head, doneSeq) =>
+        val sortedDoneSeq = doneSeq.sorted
+        log.debug("Checkpoint %s+%s: head=%s done=(%s)", queueName, name, head, sortedDoneSeq.mkString(","))
+        val newFile = uniqueFile(new File(file.getParent, file.getName + "~~"))
+        val newBookmarkFile = BookmarkFile.create(newFile)
+        newBookmarkFile.readHead(head)
+        newBookmarkFile.readDone(sortedDoneSeq)
+        newBookmarkFile.close()
+        newFile.renameTo(file)
       }
+    }
+
+    private[libkestrel] def forceCheckpoint() {
+      synchronized { dirty = true }
+      checkpoint()
     }
 
     def head: Long = this._head
@@ -471,135 +635,60 @@ class Journal(
     def tail: Long = Journal.this._tailId
 
     def head_=(id: Long) {
-      _head = id
-      _doneSet.retain { _ > head }
-      dirty = true
+      synchronized {
+        _head = id
+        _doneSet.retain { _ > head }
+        dirty = true
+      }
     }
 
-    def commit(id: Long) {
-      if (id == _head + 1) {
-        _head += 1
-        while (_doneSet contains _head + 1) {
+    def commit(item: QueueItem) {
+      val id = item.id
+      synchronized {
+        if (id == _head + 1) {
           _head += 1
-          _doneSet.remove(_head)
+          while (_doneSet contains _head + 1) {
+            _head += 1
+            _doneSet.remove(_head)
+          }
+        } else if (id > _head) {
+          _doneSet.add(id)
         }
-      } else if (id > _head) {
-        _doneSet.add(id)
+        dirty = true
+        itemCount.getAndDecrement()
+        byteCount.getAndAdd(-item.dataSize)
       }
-      dirty = true
+    }
+
+    def unget(item: QueueItem) {
+      rejectedQueue.add(item)
     }
 
     /**
      * Discard all items and catch up with the main queue.
      */
     def flush() {
-      _head = _tailId
-      _doneSet.clear()
-      endReadBehind()
-      dirty = true
+      synchronized {
+        withReadLock {
+          val currentTail = _tailId
+          while(_head < currentTail) {
+            next().foreach { commit(_) }
+          }
+          dirty = true
+          checkpoint()
+        }
+      }
     }
 
     def close() {
-      endReadBehind()
-    }
-
-    def inReadBehind = readBehind.isDefined
-
-    def readBehindId = readBehind.get.id
-
-    /**
-     * Open the journal file containing a given item, so we can read items directly out of the
-     * file. This means the queue no longer wants to try keeping every item in memory.
-     */
-    def startReadBehind(id: Long) {
-      readBehind = Some(new Scanner(id, followFiles = true, logIt = true))
-    }
-
-    /**
-     * Read & return the next item in the read-behind journals.
-     * If we've caught up, turn off read-behind and return None.
-     */
-    def nextReadBehind(): Option[QueueItem] = {
-      val rv = readBehind.get.next()
-      if (rv == None) readBehind = None
-      rv
-    }
-
-    /**
-     * End read-behind mode, and close any open journal file.
-     */
-    def endReadBehind() {
-      readBehind.foreach { _.end() }
-      readBehind = None
-    }
-
-    /**
-     * Scan forward through journals from a specific starting point.
-     */
-    class Scanner(startId: Long, followFiles: Boolean = true, logIt: Boolean = false) {
-      private[this] var journalFile: JournalFileReader = _
-      var id = 0L
-
-      start()
-
-      def start() {
-        val fileInfo = fileInfoForId(startId).getOrElse { idMap(earliestHead) }
-        val jf = JournalFile.open(fileInfo.file)
-        if (startId >= earliestHead) {
-          var lastId = -1L
-          while (lastId < startId) {
-            jf.readNext() match {
-              case None => {
-                // just end read-behind immediately.
-                id = tail
-                return
-              }
-              case Some(Record.Put(QueueItem(id, _, _, _, _))) => lastId = id
-              case _ =>
-            }
-          }
-        }
-        journalFile = jf
-        id = startId
-      }
-
-      @tailrec
-      final def next(): Option[QueueItem] = {
-        if (id == tail) {
-          end()
-          return None
-        }
-
-        journalFile.readNext() match {
-          case None => {
-            journalFile.close()
-            journalFile = null
-            if (followFiles) {
-              val fileInfo = fileInfoForId(id + 1)
-              if (!fileInfo.isDefined) throw new IOException("Unknown id")
-              if (logIt) log.debug("Read-behind for %s+%s moving to: %s", queueName, name, fileInfo.get.file)
-              journalFile = JournalFile.open(fileInfo.get.file)
-              next()
-            } else {
-              end()
-              None
-            }
-          }
-          case Some(Record.Put(item)) => {
-            id = item.id
-            Some(item)
-          }
-          case _ => next()
-        }
-      }
-
-      def end() {
-        if (logIt) log.info("Leaving read-behind for %s+%s", queueName, name)
+      synchronized {
         if (journalFile ne null) {
           journalFile.close()
           journalFile = null
         }
       }
     }
+
+    override def toString() = "Reader(%s, %s)".format(name, file)
   }
 }
