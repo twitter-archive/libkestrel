@@ -3,7 +3,7 @@ import Keys._
 import com.twitter.sbt._
 
 object Libkestrel extends Build {
-  val utilVersion = "5.3.11"
+  val utilVersion = "5.3.14"
 
   lazy val root = Project(
     id = "libkestrel",
