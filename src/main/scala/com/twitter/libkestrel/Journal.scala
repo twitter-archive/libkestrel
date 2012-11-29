@@ -62,19 +62,22 @@ object Journal {
   }
 
   private[libkestrel] val NoCondition = (_: QueueItem) => true
-  
+
+  //Dynamically load ConcurrentLinkedDeque so we don't have a hard dependence on Java 7
   private[this] val dequeClass: Class[_] = {
     //First try to see java.util.concurrent.ConcurrentLinkedDeque exists
     try {
-      getClass.getClassLoader.loadClass("java.util.concurrent.ConcurrentLinkedDeque")
+      Class.forName("java.util.concurrent.ConcurrentLinkedDeque")
     } catch {
       //Now try to see if jsr166y is available on the classpath
       case e:ClassNotFoundException => 
         try {
-          getClass.getClassLoader.loadClass("jsr166y.ConcurrentLinkedDeque")
+          Class.forName("jsr166y.ConcurrentLinkedDeque")
         } catch  {
-			case e:ClassNotFoundException => sys.error("Could not find a class for ConcurrentLinkedDeque. You either need to be running Java 7+ or supply js166y jar.")
-		}
+          case e:ClassNotFoundException => 
+            throw new ClassNotFoundException("Could not find an appropriate class for ConcurrentLinkedDeque. " +
+              "You either need to be running Java 7+ or supply js166y jar.")
+        }
     }
   }
 
