@@ -21,8 +21,9 @@ import com.twitter.logging.Logger
 import com.twitter.util._
 import java.io.{File, FileOutputStream, IOException}
 import java.nio.ByteBuffer
-import java.util.concurrent.{ConcurrentLinkedDeque, ScheduledExecutorService}
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.atomic.{AtomicInteger,AtomicLong}
+import java.util.Deque
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.collection.mutable
@@ -61,6 +62,27 @@ object Journal {
   }
 
   private[libkestrel] val NoCondition = (_: QueueItem) => true
+
+  //Dynamically load ConcurrentLinkedDeque so we don't have a hard dependence on Java 7
+  private[this] val dequeClass: Class[_] = {
+    //First try to see java.util.concurrent.ConcurrentLinkedDeque exists
+    try {
+      Class.forName("java.util.concurrent.ConcurrentLinkedDeque")
+    } catch {
+      //Now try to see if jsr166y is available on the classpath
+      case e:ClassNotFoundException => 
+        try {
+          Class.forName("jsr166y.ConcurrentLinkedDeque")
+        } catch  {
+          case e:ClassNotFoundException => 
+            throw new ClassNotFoundException("Could not find an appropriate class for ConcurrentLinkedDeque. " +
+              "You either need to be running Java 7+ or supply js166y jar.")
+        }
+    }
+  }
+
+  private def newDeque[T]: Deque[T] = dequeClass.newInstance().asInstanceOf[Deque[T]]
+
 }
 
 /**
@@ -447,7 +469,7 @@ class Journal(
     val putCount = new AtomicInteger(0)
     val putBytes = new AtomicLong(0)
 
-    private val rejectedQueue = new ConcurrentLinkedDeque[QueueItem]()
+    private val rejectedQueue = Journal.newDeque[QueueItem]
 
     private[libkestrel] def readState() {
       val bookmarkFile = BookmarkFile.open(file)
